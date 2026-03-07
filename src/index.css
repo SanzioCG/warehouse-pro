@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+body {
+  background: #07090e;
+  color: #e2e8f4;
+  font-family: 'Syne', sans-serif;
+  margin: 0;
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: #0d1018; }
+::-webkit-scrollbar-thumb { background: #28324a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4a6a; }
