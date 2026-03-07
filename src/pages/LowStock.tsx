@@ -4,10 +4,7 @@ import type { User, Language } from '../types'
 import { ROLES, WAREHOUSES } from '../config/roles'
 import { t } from '../i18n'
 
-interface Props {
-  user: User
-  lang: Language
-}
+interface Props { user: User; lang: Language }
 
 export default function LowStock({ user, lang }: Props) {
   const tr = t(lang)
@@ -53,14 +50,14 @@ export default function LowStock({ user, lang }: Props) {
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                {[tr.name, 'Ombor', tr.onHand, tr.threshold, 'Yetishmaydi', tr.status].map(h => (
+                {['SKU', tr.name, 'Ombor', tr.onHand, tr.threshold, 'Yetishmaydi', tr.status].map(h => (
                   <th key={h} className="px-4 py-2.5 text-left text-[10px] font-mono text-[#4a5568] uppercase tracking-wider bg-[#0d1018] border-b border-[#1e2535]">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-16 text-[#4a5568]">
+                <tr><td colSpan={7} className="text-center py-16 text-[#4a5568]">
                   <div className="text-3xl mb-2">✅</div>Barcha mahsulotlar yetarli!
                 </td></tr>
               ) : rows.map(r => {
@@ -69,6 +66,7 @@ export default function LowStock({ user, lang }: Props) {
                 const missing = Math.max(0, (p?.threshold || 0) - r.on_hand)
                 return (
                   <tr key={r.id} className="border-b border-[#1e2535] hover:bg-[#131720] transition-all">
+                    <td className="px-4 py-3 text-[11px] font-mono text-[#4a5568]">{p?.sku}</td>
                     <td className="px-4 py-3 font-bold text-[13px]">{p?.name}</td>
                     <td className="px-4 py-3">
                       {wh && (
