@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import type { Language } from '../../types'
-import { t } from '../../i18n'
 
 interface Props {
   onLogin: (email: string, password: string) => Promise<string | null>
