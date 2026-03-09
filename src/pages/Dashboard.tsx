@@ -11,7 +11,7 @@ export default function Dashboard({ user, lang }: Props) {
   const role = ROLES[user.role]
   const [products, setProducts] = useState<any[]>([])
   const [stock, setStock] = useState<any[]>([])
-  const [txs, setTxs] = useState<any[]>([])
+  const [, setTxs] = useState<any[]>([])
   const [freeTxs, setFreeTxs] = useState<any[]>([])
   const [recentTx, setRecentTx] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
