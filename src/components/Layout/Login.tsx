@@ -8,30 +8,29 @@ interface Props {
 }
 
 export default function Login({ onLogin, lang, setLang }: Props) {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
   async function handleLogin() {
-    if (!email.trim()) { setError('Email kiriting!'); return }
+    if (!username.trim()) { setError('Login kiriting!'); return }
     if (!password.trim()) { setError('Parol kiriting!'); return }
     setLoading(true)
     setError('')
-    const err = await onLogin(email.trim(), password.trim())
+    const err = await onLogin(username.trim(), password.trim())
     if (err) setError(err)
     setLoading(false)
   }
 
   return (
     <div className="min-h-screen bg-[#07090e] flex items-center justify-center relative overflow-hidden">
-      {/* Background blobs */}
       <div className="absolute w-[600px] h-[600px] rounded-full bg-[#00d4aa]/5 -top-40 -left-40 pointer-events-none" />
       <div className="absolute w-[400px] h-[400px] rounded-full bg-[#0095ff]/4 -bottom-20 -right-20 pointer-events-none" />
 
       {/* Lang switcher */}
       <div className="absolute top-6 right-6 flex gap-2">
-        {(['uz', 'ru', 'en'] as Language[]).map(l => (
+        {(['uz', 'ru'] as Language[]).map(l => (
           <button
             key={l}
             onClick={() => setLang(l)}
@@ -46,7 +45,6 @@ export default function Login({ onLogin, lang, setLang }: Props) {
         ))}
       </div>
 
-      {/* Card */}
       <div className="w-full max-w-sm px-6">
         {/* Logo */}
         <div className="text-center mb-8">
@@ -64,7 +62,7 @@ export default function Login({ onLogin, lang, setLang }: Props) {
         {/* Form */}
         <div className="bg-[#0d1018] border border-[#1e2535] rounded-2xl p-7">
           <div className="text-[18px] font-black mb-1">Tizimga kirish</div>
-          <div className="text-[11px] font-mono text-[#4a5568] mb-6">// Email va parolingizni kiriting</div>
+          <div className="text-[11px] font-mono text-[#4a5568] mb-6">// Login va parolingizni kiriting</div>
 
           {error && (
             <div className="bg-[#ff4757]/10 border border-[#ff4757]/25 rounded-xl p-3 mb-4 text-[13px] text-[#ff4757]">
@@ -73,13 +71,13 @@ export default function Login({ onLogin, lang, setLang }: Props) {
           )}
 
           <div className="mb-3">
-            <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">Email</label>
+            <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">Login</label>
             <input
-              type="email"
+              type="text"
               className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-4 py-3 text-[14px] text-white outline-none focus:border-[#00d4aa] focus:shadow-[0_0_0_3px_rgba(0,212,170,0.08)] transition-all placeholder:text-[#4a5568]"
-              placeholder="email@proconcept.uz"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
+              placeholder="Username"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleLogin()}
             />
           </div>

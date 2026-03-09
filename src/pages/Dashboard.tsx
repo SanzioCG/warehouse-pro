@@ -30,7 +30,7 @@ export default function Dashboard({ user, lang }: Props) {
       { data: recentData },
     ] = await Promise.all([
       supabase.from('products').select('*').in('warehouse_id', role.warehouses),
-      supabase.from('stock').select('*, products(warehouse_id, threshold, cost_price, sell_price, name, unit, sku)'),
+      supabase.from('stock').select('*, products(warehouse_id, threshold, name, unit, sku)'),
       supabase.from('transactions').select('*').in('warehouse_id', role.warehouses),
       supabase.from('transactions').select('*, products(cost_price, warehouse_id)').eq('type', 'issuance').eq('sale_type', 'free').in('warehouse_id', role.warehouses),
       supabase.from('transactions').select('*, products(name, unit)').in('warehouse_id', role.warehouses).order('created_at', { ascending: false }).limit(6),
@@ -48,9 +48,9 @@ export default function Dashboard({ user, lang }: Props) {
   function getWhStats(wid: string) {
     const myStock = stock.filter((s: any) => s.products?.warehouse_id === wid)
     const myFree = freeTxs.filter((t: any) => t.products?.warehouse_id === wid)
-    const value = myStock.reduce((a: number, s: any) => a + s.on_hand * (s.products?.cost_price || 0), 0)
+    const value = myStock.reduce((a: number, s: any) => a + s.on_hand * (s.cost_price || 0), 0)
     const profit = myStock.reduce((a: number, s: any) => {
-      const margin = (s.products?.sell_price || 0) - (s.products?.cost_price || 0)
+      const margin = (s.sell_price || 0) - (s.cost_price || 0)
       return a + s.on_hand * margin
     }, 0)
     const loss = myFree.reduce((a: number, t: any) => a + t.qty * (t.products?.cost_price || 0), 0)
@@ -64,21 +64,21 @@ export default function Dashboard({ user, lang }: Props) {
     const myFree = freeTxs.filter((t: any) => t.products?.warehouse_id === wid)
     const myStock = stock.filter((s: any) => s.products?.warehouse_id === wid)
     const batches = [...new Set(myTxs.map((t: any) => t.batch).filter(Boolean))] as string[]
-    const totalValue = myStock.reduce((a: number, s: any) => a + s.on_hand * (s.products?.cost_price || 0), 0)
+    const totalValue = myStock.reduce((a: number, s: any) => a + s.on_hand * (s.cost_price || 0), 0)
     const totalProfit = myStock.reduce((a: number, s: any) =>
-      a + s.on_hand * ((s.products?.sell_price || 0) - (s.products?.cost_price || 0)), 0)
+      a + s.on_hand * ((s.sell_price || 0) - (s.cost_price || 0)), 0)
     const totalLoss = myFree.reduce((a: number, t: any) => a + t.qty * (t.products?.cost_price || 0), 0)
 
     const batchData: Record<string, { value: number; profit: number; loss: number; qty: number }> = {}
     myTxs.forEach((t: any) => {
-      const b = t.batch || "Noma'lum"
+      const b = t.batch || (lang === 'ru' ? 'Неизвестно' : "Noma'lum")
       if (!batchData[b]) batchData[b] = { value: 0, profit: 0, loss: 0, qty: 0 }
       batchData[b].qty += t.qty
       batchData[b].value += t.qty * (t.cost_price || 0)
       batchData[b].profit += t.qty * ((t.sell_price || 0) - (t.cost_price || 0))
     })
     myFree.forEach((t: any) => {
-      const b = t.batch || "Noma'lum"
+      const b = t.batch || (lang === 'ru' ? 'Неизвестно' : "Noma'lum")
       if (!batchData[b]) batchData[b] = { value: 0, profit: 0, loss: 0, qty: 0 }
       batchData[b].loss += t.qty * (t.products?.cost_price || 0)
     })
@@ -92,6 +92,28 @@ export default function Dashboard({ user, lang }: Props) {
     const filteredLoss = batchFilter === 'all' ? totalLoss : filtered.reduce((a, [, v]) => a + v.loss, 0)
 
     return { batches, totalValue, totalProfit, totalLoss, filtered, filteredValue, filteredProfit, filteredLoss }
+  }
+
+  // i18n helpers
+  const i = {
+    omborlar:       lang === 'ru' ? 'Склады'                    : 'Omborlar',
+    jamiAktivlar:   lang === 'ru' ? 'Общие активы'              : 'Jami aktivlar',
+    foyda:          lang === 'ru' ? 'Прибыль'                   : 'Foyda',
+    zarar:          lang === 'ru' ? 'Убыток'                    : 'Zarar',
+    kamZaxira:      lang === 'ru' ? 'Мало остатков'             : 'Kam zaxira',
+    mahsulot:       lang === 'ru' ? 'товаров'                   : 'mahsulot',
+    jamiQiymat:     lang === 'ru' ? 'Общая стоимость'           : 'Jami qiymat',
+    kutFoyda:       lang === 'ru' ? 'Ожидаемая прибыль'        : 'Kutilayotgan foyda',
+    tekinZarar:     lang === 'ru' ? 'Убыток от бесплатных'      : 'Tekin zarar',
+    aktivQiymati:   lang === 'ru' ? '$ Стоимость активов'       : '$ Aktiv qiymati',
+    sofRent:        lang === 'ru' ? '💹 Чистая рентабельность'  : '💹 Sof rentabellik',
+    molHisobot:     lang === 'ru' ? 'Финансовый отчёт'          : 'Moliyaviy hisobot',
+    partiya:        lang === 'ru' ? '🔽 Партия:'                : '🔽 Partiya:',
+    barchasi:       lang === 'ru' ? 'Все'                       : 'Barchasi',
+    hisob:          lang === 'ru' ? 'Расчёты на основе остатков и цен' : 'Hisob-kitoblar jami qoldiq va narxga asoslangan',
+    taWarning:      lang === 'ru' ? '⚠️ Убыток от бесплатных'  : '⚠️ Tekin zarar',
+    operYoq:        lang === 'ru' ? 'Операций нет'              : "Operatsiyalar yo'q",
+    zaxira:         lang === 'ru' ? 'Запас'                     : 'Zaxira',
   }
 
   if (loading) return (
@@ -110,24 +132,24 @@ export default function Dashboard({ user, lang }: Props) {
         <div className="grid grid-cols-3 gap-3 mb-5">
           {[
             {
-              label: 'Jami qiymat',
+              label: i.jamiQiymat,
               value: fmt(stock.filter((s: any) => role.warehouses.includes(s.products?.warehouse_id))
-                .reduce((a: number, s: any) => a + s.on_hand * (s.products?.cost_price || 0), 0)),
+                .reduce((a: number, s: any) => a + s.on_hand * (s.cost_price || 0), 0)),
               accent: '#00d4aa',
             },
             {
-              label: 'Kutilayotgan foyda',
+              label: i.kutFoyda,
               value: fmt(stock.filter((s: any) => role.warehouses.includes(s.products?.warehouse_id))
-                .reduce((a: number, s: any) => a + s.on_hand * ((s.products?.sell_price || 0) - (s.products?.cost_price || 0)), 0)),
+                .reduce((a: number, s: any) => a + s.on_hand * ((s.sell_price || 0) - (s.cost_price || 0)), 0)),
               accent: '#a55eea',
             },
             {
-              label: 'Tekin zarar',
+              label: i.tekinZarar,
               value: '−' + fmt(freeTxs.reduce((a: number, t: any) => a + t.qty * (t.products?.cost_price || 0), 0)),
               accent: '#ff4757',
             },
-          ].map((c, i) => (
-            <div key={i} className="bg-[#0d1018] border border-[#171c27] rounded-xl p-4 relative overflow-hidden">
+          ].map((c, idx) => (
+            <div key={idx} className="bg-[#0d1018] border border-[#171c27] rounded-xl p-4 relative overflow-hidden">
               <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: c.accent }} />
               <div className="text-[14px] font-mono text-[#ddeaff] uppercase tracking-widest mb-2">{c.label}</div>
               <div className="text-xl font-black font-mono" style={{ color: c.accent }}>{c.value}</div>
@@ -139,7 +161,7 @@ export default function Dashboard({ user, lang }: Props) {
       {/* Ombor kartochkalari */}
       <div className="mb-8 text-[16px] font-black flex items-center gap-5">
         <div className="w-1 h-5 rounded bg-[#00d4aa]" />
-        Omborlar
+        {i.omborlar}
       </div>
       <div className="grid grid-cols-4 gap-3 mb-6">
         {WAREHOUSES.filter(w => role.warehouses.includes(w.id)).map(wh => {
@@ -159,7 +181,7 @@ export default function Dashboard({ user, lang }: Props) {
                   <div>
                     <div className="font-black text-[14px] leading-tight">{wh.name}</div>
                     <div className="text-[12px] font-mono mt-0.8" style={{ color: wh.color }}>
-                      {s.totalProducts} mahsulot
+                      {s.totalProducts} {i.mahsulot}
                     </div>
                   </div>
                 </div>
@@ -169,29 +191,29 @@ export default function Dashboard({ user, lang }: Props) {
               {role.canSeeCost ? (
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-[14px] text-[#c7ccd4]">Jami aktivlar</span>
+                    <span className="text-[14px] text-[#c7ccd4]">{i.jamiAktivlar}</span>
                     <span className="font-mono font-bold text-[14px] text-[#00d4aa]">{fmt(s.value)}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-[14px] text-[#c7ccd4]">Foyda</span>
+                    <span className="text-[14px] text-[#c7ccd4]">{i.foyda}</span>
                     <span className="font-mono font-bold text-[14px] text-[#a55eea]">{fmt(s.profit)}</span>
                   </div>
                   {s.loss > 0 && (
                     <div className="flex justify-between items-center">
-                      <span className="text-[14px] text-[#c7ccd4]">Zarar</span>
+                      <span className="text-[14px] text-[#c7ccd4]">{i.zarar}</span>
                       <span className="font-mono font-bold text-[14px] text-[#ff4757]">−{fmt(s.loss)}</span>
                     </div>
                   )}
                   {s.lowCount > 0 && (
                     <div className="flex justify-between items-center pt-1 border-t border-[#1e2535]">
-                      <span className="text-[14px] text-[#ff4757]">Kam zaxira</span>
-                      <span className="font-mono font-bold text-[14px] text-[#ff4757]">{s.lowCount} ta</span>
+                      <span className="text-[14px] text-[#ff4757]">{i.kamZaxira}</span>
+                      <span className="font-mono font-bold text-[14px] text-[#ff4757]">{s.lowCount} {lang === 'ru' ? 'шт' : 'ta'}</span>
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="flex justify-between items-center">
-                  <span className="text-[10px] text-[#4a5568]">Zaxira</span>
+                  <span className="text-[10px] text-[#4a5568]">{i.zaxira}</span>
                   <span className="font-mono font-bold text-[12px]" style={{ color: wh.color }}>
                     {stock.filter((st: any) => st.products?.warehouse_id === wh.id)
                       .reduce((a: number, st: any) => a + st.on_hand, 0)}
@@ -220,7 +242,7 @@ export default function Dashboard({ user, lang }: Props) {
           <tbody>
             {recentTx.length === 0 ? (
               <tr><td colSpan={6} className="text-center py-12 text-[#4a5568]">
-                <div className="text-3xl mb-2">📋</div>Operatsiyalar yo'q
+                <div className="text-3xl mb-2">📋</div>{i.operYoq}
               </td></tr>
             ) : recentTx.map((tx: any) => {
               const wh = WAREHOUSES.find(w => w.id === tx.warehouse_id)
@@ -266,7 +288,7 @@ export default function Dashboard({ user, lang }: Props) {
                     </div>
                     <div>
                       <div className="font-black text-[16px] uppercase tracking-wide">{wh.name}</div>
-                      <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mt-0.5">Moliyaviy hisobot</div>
+                      <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mt-0.5">{i.molHisobot}</div>
                     </div>
                   </div>
                   <button onClick={() => setSelectedWh(null)}
@@ -276,11 +298,11 @@ export default function Dashboard({ user, lang }: Props) {
 
               <div className="p-6">
                 <div className="flex items-center gap-2 mb-5">
-                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">🔽 Partiya:</span>
+                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">{i.partiya}</span>
                   <div className="flex gap-1.5 flex-wrap">
                     <button onClick={() => setBatchFilter('all')}
                       className={`px-3 py-1 rounded-lg text-[11px] font-mono border transition-all ${batchFilter === 'all' ? 'bg-[#00d4aa] text-[#050e0c] border-[#00d4aa] font-bold' : 'border-[#1e2535] text-[#8896ae] hover:border-[#28324a]'}`}>
-                      Barchasi
+                      {i.barchasi}
                     </button>
                     {d.batches.map(b => (
                       <button key={b} onClick={() => setBatchFilter(b)}
@@ -295,20 +317,20 @@ export default function Dashboard({ user, lang }: Props) {
 
                 <div className="grid grid-cols-2 gap-4 mb-5">
                   <div>
-                    <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">Jami aktivlar</div>
+                    <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">{i.jamiAktivlar}</div>
                     <div className="text-4xl font-black text-white">{fmt(d.filteredValue)}</div>
-                    <div className="text-[10px] font-mono text-[#00d4aa] mt-1">$ Aktiv qiymati</div>
+                    <div className="text-[10px] font-mono text-[#00d4aa] mt-1">{i.aktivQiymati}</div>
                   </div>
                   <div>
-                    <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">Kutilayotgan foyda</div>
+                    <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">{i.kutFoyda}</div>
                     <div className="text-4xl font-black text-[#00d4aa]">{fmt(d.filteredProfit)}</div>
-                    <div className="text-[10px] font-mono text-[#00d4aa] mt-1">💹 Sof rentabellik</div>
+                    <div className="text-[10px] font-mono text-[#00d4aa] mt-1">{i.sofRent}</div>
                   </div>
                 </div>
 
                 {d.filteredLoss > 0 && (
                   <div className="bg-[#ff4757]/8 border border-[#ff4757]/20 rounded-xl px-4 py-3 mb-4 flex items-center justify-between">
-                    <span className="text-[12px] text-[#ff4757]">⚠️ Tekin zarar</span>
+                    <span className="text-[12px] text-[#ff4757]">{i.taWarning}</span>
                     <span className="font-mono font-black text-[#ff4757]">−{fmt(d.filteredLoss)}</span>
                   </div>
                 )}
@@ -329,9 +351,7 @@ export default function Dashboard({ user, lang }: Props) {
                 )}
 
                 <div className="border-t border-[#1e2535] mt-5 pt-3 text-center">
-                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">
-                    Hisob-kitoblar jami qoldiq va narxga asoslangan
-                  </span>
+                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">{i.hisob}</span>
                 </div>
               </div>
             </div>

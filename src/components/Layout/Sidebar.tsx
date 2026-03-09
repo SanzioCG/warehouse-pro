@@ -26,11 +26,11 @@ const NAV_ITEMS: NavEntry[] = [
 ]
 
 const SECTIONS: Record<string, Record<Language, string>> = {
-  main:       { uz: 'Asosiy',        ru: 'Главная',   en: 'Main' },
-  inventory:  { uz: 'Inventar',      ru: 'Инвентарь', en: 'Inventory' },
-  operations: { uz: 'Operatsiyalar', ru: 'Операции',  en: 'Operations' },
-  reports:    { uz: 'Hisobotlar',    ru: 'Отчёты',    en: 'Reports' },
-  system:     { uz: 'Tizim',         ru: 'Система',   en: 'System' },
+  main:       { uz: 'Asosiy',        ru: 'Главная' },
+  inventory:  { uz: 'Inventar',      ru: 'Инвентарь' },
+  operations: { uz: 'Operatsiyalar', ru: 'Операции' },
+  reports:    { uz: 'Hisobotlar',    ru: 'Отчёты' },
+  system:     { uz: 'Tizim',         ru: 'Система' },
 }
 
 interface Props {

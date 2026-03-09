@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase, uploadProductImage } from '../lib/supabase'
 import type { User, Language } from '../types'
-import { ROLES, WAREHOUSES, WAREHOUSE_PARAMS } from '../config/roles'
+import { ROLES, WAREHOUSES } from '../config/roles'
 import { t } from '../i18n'
 
 interface Props { user: User; lang: Language }
@@ -42,7 +42,11 @@ export default function Products({ user, lang }: Props) {
   })
 
   function openAdd() {
-    setForm({ warehouse_id: role.warehouses[0], sku: '', name: '', unit: 'dona', sell_price: 0, cost_price: 0, threshold: 0, attrs: {}, image_url: '' })
+    setForm({
+      warehouse_id: role.warehouses[0],
+      sku: '', name: '', unit: 'dona',
+      threshold: 0, attrs: {}, image_url: ''
+    })
     setImageFile(null)
     setImagePreview('')
     setModal('add')
@@ -77,12 +81,18 @@ export default function Products({ user, lang }: Props) {
       }
     }
 
+    // texture attrs dan ajratib olamiz
+    const texture = (form.attrs || {}).texture || ''
+    const attrsWithoutTexture = { ...form.attrs }
+    delete attrsWithoutTexture.texture
+
     if (modal === 'add') {
       const { data } = await supabase.from('products').insert([{
         warehouse_id: form.warehouse_id,
         sku: form.sku, name: form.name, unit: form.unit,
-        sell_price: form.sell_price, cost_price: form.cost_price,
-        threshold: form.threshold, attrs: form.attrs || {},
+        sell_price: 0, cost_price: 0,
+        threshold: form.threshold,
+        attrs: { texture, ...attrsWithoutTexture },
         image_url,
       }]).select()
       if (data) setProducts(prev => [...data, ...prev].sort((a, b) => a.sku.localeCompare(b.sku)))
@@ -95,8 +105,9 @@ export default function Products({ user, lang }: Props) {
       await supabase.from('products').update({
         warehouse_id: form.warehouse_id, sku: form.sku,
         name: form.name, unit: form.unit,
-        sell_price: form.sell_price, cost_price: form.cost_price,
-        threshold: form.threshold, attrs: form.attrs, image_url,
+        threshold: form.threshold,
+        attrs: { texture, ...attrsWithoutTexture },
+        image_url,
       }).eq('id', form.id)
       setProducts(prev => prev.map(p => p.id === form.id ? { ...p, ...form, image_url } : p))
     }
@@ -117,8 +128,7 @@ export default function Products({ user, lang }: Props) {
     setModal(null)
   }
 
-  const params = WAREHOUSE_PARAMS[form.warehouse_id || ''] || []
-  const fmt = (n: number) => n?.toLocaleString('uz-UZ')
+  
 
   return (
     <div>
@@ -168,20 +178,20 @@ export default function Products({ user, lang }: Props) {
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                {['', tr.sku, tr.name, 'Ombor', tr.unit,
-                  ...(role.canSeeCost ? [tr.costPrice] : []),
-                  tr.sellPrice, tr.warehouseParams, ''].map((h, i) => (
+                {['', tr.sku, tr.name, 'Texture', 'Ombor', tr.unit, tr.warehouseParams, ''].map((h, i) => (
                   <th key={i} className="px-4 py-2.5 text-left text-[10px] font-mono text-[#4a5568] uppercase tracking-wider bg-[#0d1018] border-b border-[#1e2535]">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-16 text-[#4a5568]">
+                <tr><td colSpan={8} className="text-center py-16 text-[#4a5568]">
                   <div className="text-3xl mb-2">📦</div>{tr.noData}
                 </td></tr>
               ) : filtered.map((p: any) => {
                 const wh = WAREHOUSES.find(w => w.id === p.warehouse_id)
+                const texture = p.attrs?.texture || '—'
+                const otherAttrs = Object.entries(p.attrs || {}).filter(([k]) => k !== 'texture')
                 return (
                   <tr key={p.id} className="border-b border-[#1e2535] hover:bg-[#131720] transition-all">
                     {/* Rasm */}
@@ -201,6 +211,7 @@ export default function Products({ user, lang }: Props) {
                     </td>
                     <td className="px-4 py-3 text-[11px] font-mono text-[#4a5568]">{p.sku}</td>
                     <td className="px-4 py-3 font-bold text-[13px]">{p.name}</td>
+                    <td className="px-4 py-3 text-[12px] text-[#8896ae]">{texture}</td>
                     <td className="px-4 py-3">
                       {wh && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold border"
@@ -210,12 +221,8 @@ export default function Products({ user, lang }: Props) {
                       )}
                     </td>
                     <td className="px-4 py-3 text-[12px] text-[#8896ae]">{p.unit}</td>
-                    {role.canSeeCost && (
-                      <td className="px-4 py-3 font-mono text-[12px] text-[#8896ae]">{fmt(p.cost_price)}</td>
-                    )}
-                    <td className="px-4 py-3 font-mono font-bold text-[#00d4aa]">{fmt(p.sell_price)}</td>
                     <td className="px-4 py-3">
-                      {Object.entries(p.attrs || {}).map(([k, v]) => (
+                      {otherAttrs.map(([k, v]) => (
                         <span key={k} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono bg-[#131720] text-[#8896ae] border border-[#1e2535] m-0.5">
                           {k}: {v as string}
                         </span>
@@ -261,12 +268,15 @@ export default function Products({ user, lang }: Props) {
 
       {/* Add/Edit Modal */}
       {modal && modal !== 'delete' && (
-        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm"
-          onClick={e => e.target === e.currentTarget && setModal(null)}>
+        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm">
           <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl p-7 w-[600px] max-w-[95vw] max-h-[90vh] overflow-y-auto">
-            <div className="text-[17px] font-black mb-5 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-[#00d4aa]" />
-              {modal === 'add' ? tr.newProduct : tr.editProduct}
+            <div className="text-[17px] font-black mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-[#00d4aa]" />
+                {modal === 'add' ? tr.newProduct : tr.editProduct}
+              </div>
+              <button onClick={() => setModal(null)}
+                className="w-8 h-8 rounded-lg border border-[#1e2535] text-[#4a5568] hover:text-white hover:border-[#ff4757] transition-all flex items-center justify-center">✕</button>
             </div>
 
             {/* Image Upload */}
@@ -294,19 +304,14 @@ export default function Products({ user, lang }: Props) {
                   )}
                 </div>
                 <div>
-                  <button
-                    type="button"
-                    onClick={() => fileRef.current?.click()}
-                    className="block px-4 py-2 rounded-lg border border-[#1e2535] text-[#8896ae] text-[12px] hover:border-[#00d4aa] hover:text-[#00d4aa] transition-all mb-2"
-                  >
+                  <button type="button" onClick={() => fileRef.current?.click()}
+                    className="block px-4 py-2 rounded-lg border border-[#1e2535] text-[#8896ae] text-[12px] hover:border-[#00d4aa] hover:text-[#00d4aa] transition-all mb-2">
                     📂 Rasm tanlash
                   </button>
                   {imagePreview && (
-                    <button
-                      type="button"
+                    <button type="button"
                       onClick={() => { setImagePreview(''); setImageFile(null); setForm((f: any) => ({ ...f, image_url: '' })) }}
-                      className="block px-4 py-2 rounded-lg border border-[#1e2535] text-[#ff4757] text-[12px] hover:border-[#ff4757] transition-all mb-2"
-                    >
+                      className="block px-4 py-2 rounded-lg border border-[#1e2535] text-[#ff4757] text-[12px] hover:border-[#ff4757] transition-all mb-2">
                       🗑 Rasmni o'chirish
                     </button>
                   )}
@@ -352,7 +357,7 @@ export default function Products({ user, lang }: Props) {
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-3 mt-3">
+            <div className="grid grid-cols-2 gap-3 mt-3">
               <div>
                 <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.unit}</label>
                 <select
@@ -364,47 +369,26 @@ export default function Products({ user, lang }: Props) {
                 </select>
               </div>
               <div>
-                <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.sellPrice}</label>
+                <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.threshold} (Min zaxira)</label>
                 <input type="number"
                   className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa] placeholder:text-[#4a5568]"
-                  placeholder="0" value={form.sell_price || ''}
-                  onChange={e => setForm((f: any) => ({ ...f, sell_price: Number(e.target.value) }))} />
-              </div>
-              <div>
-                <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.costPrice}</label>
-                <input type="number"
-                  className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa] placeholder:text-[#4a5568]"
-                  placeholder="0" value={form.cost_price || ''}
-                  onChange={e => setForm((f: any) => ({ ...f, cost_price: Number(e.target.value) }))} />
+                  placeholder="0" value={form.threshold || ''}
+                  onChange={e => setForm((f: any) => ({ ...f, threshold: Number(e.target.value) }))} />
               </div>
             </div>
 
+            {/* Texture */}
             <div className="mt-3">
-              <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.threshold}</label>
-              <input type="number"
+              <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">Texture</label>
+              <input
                 className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa] placeholder:text-[#4a5568]"
-                placeholder="0" value={form.threshold || ''}
-                onChange={e => setForm((f: any) => ({ ...f, threshold: Number(e.target.value) }))} />
+                placeholder="Texture nomi..."
+                value={(form.attrs || {}).texture || ''}
+                onChange={e => setForm((f: any) => ({ ...f, attrs: { ...f.attrs, texture: e.target.value } }))}
+              />
             </div>
 
-            {params.length > 0 && (
-              <>
-                <div className="border-t border-[#1e2535] my-4" />
-                <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-3">{tr.warehouseParams}</div>
-                <div className="grid grid-cols-2 gap-3">
-                  {params.map(param => (
-                    <div key={param.key}>
-                      <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{param.label}</label>
-                      <input type={param.type}
-                        className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa] placeholder:text-[#4a5568]"
-                        placeholder={param.label}
-                        value={(form.attrs || {})[param.key] || ''}
-                        onChange={e => setForm((f: any) => ({ ...f, attrs: { ...f.attrs, [param.key]: e.target.value } }))} />
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+
 
             <div className="flex gap-2 justify-end mt-6 pt-5 border-t border-[#1e2535]">
               <button onClick={() => setModal(null)} className="px-5 py-2.5 rounded-xl border border-[#1e2535] text-[#8896ae] text-[13px] font-semibold hover:border-[#28324a] hover:text-white transition-all">{tr.cancel}</button>
@@ -419,12 +403,15 @@ export default function Products({ user, lang }: Props) {
 
       {/* Delete Modal */}
       {modal === 'delete' && (
-        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm"
-          onClick={e => e.target === e.currentTarget && setModal(null)}>
+        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm">
           <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl p-7 w-[420px]">
-            <div className="text-[17px] font-black mb-4 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-[#ff4757]" />
-              {tr.deleteProduct}
+            <div className="text-[17px] font-black mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-[#ff4757]" />
+                {tr.deleteProduct}
+              </div>
+              <button onClick={() => setModal(null)}
+                className="w-8 h-8 rounded-lg border border-[#1e2535] text-[#4a5568] hover:text-white hover:border-[#ff4757] transition-all flex items-center justify-center">✕</button>
             </div>
             <p className="text-[14px] text-[#8896ae]">
               <strong className="text-white">{form.name}</strong> {tr.deleteConfirm}

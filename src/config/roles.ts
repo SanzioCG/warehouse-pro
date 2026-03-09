@@ -15,7 +15,7 @@ interface RoleConfig {
 
 export const ROLES: Record<Role, RoleConfig> = {
   leader: {
-    label: { uz: 'Hasan — Rahbar', ru: 'Хасан — Руководитель', en: 'Hasan — Leader' },
+    label: { uz: 'Hasan — Rahbar', ru: 'Хасан — Руководитель', },
     icon: '👑', color: '#ffd700',
     warehouses: ['panels', 'profiles', 'furniture', 'doors'],
     pages: ['dashboard', 'stock', 'lowstock', 'receiving', 'issuance', 'profit', 'transactions', 'debts', 'clients', 'audit'],
@@ -25,7 +25,7 @@ export const ROLES: Record<Role, RoleConfig> = {
     canDeleteClient: true,
   },
   manager_saidaziz: {
-    label: { uz: 'Saidaziz — Menejer', ru: 'Саидазиз — Менеджер', en: 'Saidaziz — Manager' },
+    label: { uz: 'Saidaziz — Menejer', ru: 'Саидазиз — Менеджер' },
     icon: '🪵', color: '#00d4aa',
     warehouses: ['panels', 'profiles', 'furniture'],
     pages: ['dashboard', 'products', 'stock', 'lowstock', 'receiving', 'issuance', 'transactions', 'debts', 'clients', 'audit'],
@@ -35,7 +35,7 @@ export const ROLES: Record<Role, RoleConfig> = {
     canDeleteClient: true,
   },
   manager_eldor: {
-    label: { uz: 'Eldor — Menejer', ru: 'Элдор — Менеджер', en: 'Eldor — Manager' },
+    label: { uz: 'Eldor — Menejer', ru: 'Элдор — Менеджер'},
     icon: '🚪', color: '#a55eea',
     warehouses: ['doors'],
     pages: ['dashboard', 'products', 'stock', 'lowstock', 'receiving', 'issuance', 'transactions', 'debts', 'clients', 'audit'],
@@ -45,7 +45,7 @@ export const ROLES: Record<Role, RoleConfig> = {
     canDeleteClient: true,
   },
   seller: {
-    label: { uz: 'Sotuvchi', ru: 'Продавец', en: 'Seller' },
+    label: { uz: 'Sotuvchi', ru: 'Продавец'},
     icon: '💼', color: '#2ed573',
     warehouses: ['panels', 'profiles', 'furniture', 'doors'],
     pages: ['dashboard', 'stock', 'issuance', 'transactions', 'debts', 'clients'],
@@ -55,7 +55,7 @@ export const ROLES: Record<Role, RoleConfig> = {
     canDeleteClient: false,
   },
   operator: {
-    label: { uz: 'Operator', ru: 'Оператор', en: 'Operator' },
+    label: { uz: 'Operator', ru: 'Оператор' },
     icon: '🔧', color: '#747d8c',
     warehouses: ['panels', 'profiles', 'furniture', 'doors'],
     pages: ['stock', 'issuance'],

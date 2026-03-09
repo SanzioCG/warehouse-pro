@@ -13,12 +13,13 @@ export default function Issuance({ user, lang }: Props) {
   const [txs, setTxs] = useState<any[]>([])
   const [products, setProducts] = useState<any[]>([])
   const [clients, setClients] = useState<any[]>([])
+  const [stockRows, setStockRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<any>({
     warehouse_id: role.warehouses[0], product_id: '',
-    qty: '', sell_price: '', sale_type: 'paid',
+    stock_id: '', qty: '', sell_price: '', sale_type: 'paid',
     client_id: '', due_date: '', note: ''
   })
 
@@ -26,21 +27,57 @@ export default function Issuance({ user, lang }: Props) {
 
   async function fetchData() {
     setLoading(true)
-    const [{ data: txData }, { data: prodData }, { data: clientData }] = await Promise.all([
+    const [{ data: txData }, { data: prodData }, { data: clientData }, { data: stockData }] = await Promise.all([
       supabase.from('transactions').select('*, products(name, unit), clients(name)')
         .eq('type', 'issuance')
         .in('warehouse_id', role.warehouses)
         .order('created_at', { ascending: false }),
       supabase.from('products').select('*').in('warehouse_id', role.warehouses),
-      supabase.from('clients').select('*').order('name')
+      supabase.from('clients').select('*').order('name'),
+      supabase.from('stock').select('*, products(warehouse_id)').gt('on_hand', 0),
     ])
     setTxs(txData || [])
     setProducts(prodData || [])
     setClients(clientData || [])
+    setStockRows(stockData || [])
     setLoading(false)
   }
 
   const whProducts = products.filter(p => p.warehouse_id === form.warehouse_id)
+
+  // Tanlangan mahsulotning stock variantlari
+  const productStockRows = stockRows.filter(s => s.product_id === form.product_id)
+
+  function getVariantLabel(s: any) {
+    const attrs = s.attrs || {}
+    const parts = Object.entries(attrs).map(([, v]) => v as string)
+    const razmer = parts.length > 0 ? parts.join(' × ') : ''
+    const batch = s.batch ? `LOT: ${s.batch}` : ''
+    const price = s.sell_price ? `$${s.sell_price}` : ''
+    const qty = `${s.on_hand} dona`
+    return [razmer, batch, price, qty].filter(Boolean).join(' | ')
+  }
+
+  function onProductChange(product_id: string) {
+    const rows = stockRows.filter(s => s.product_id === product_id)
+    if (rows.length === 1) {
+      // Bitta variant bo'lsa avtomatik tanlash
+      setForm((f: any) => ({
+        ...f, product_id, stock_id: rows[0].id,
+        sell_price: rows[0].sell_price || ''
+      }))
+    } else {
+      setForm((f: any) => ({ ...f, product_id, stock_id: '', sell_price: '' }))
+    }
+  }
+
+  function onStockChange(stock_id: string) {
+    const s = stockRows.find(r => r.id === stock_id)
+    setForm((f: any) => ({
+      ...f, stock_id,
+      sell_price: s?.sell_price || ''
+    }))
+  }
 
   async function handleSubmit() {
     if (!form.product_id || !form.qty) return
@@ -48,8 +85,10 @@ export default function Issuance({ user, lang }: Props) {
     const prod = products.find((p: any) => p.id === form.product_id)
     const client = clients.find((c: any) => c.id === form.client_id)
     const wh = WAREHOUSES.find(w => w.id === form.warehouse_id)
+    const selectedStock = stockRows.find(s => s.id === form.stock_id)
     const qty = Number(form.qty)
-    const sellPrice = Number(form.sell_price) || prod?.sell_price || 0
+    const sellPrice = Number(form.sell_price) || selectedStock?.sell_price || 0
+    const costPrice = selectedStock?.cost_price || prod?.cost_price || 0
 
     // Insert transaction
     const { data: txData } = await supabase.from('transactions').insert([{
@@ -57,22 +96,30 @@ export default function Issuance({ user, lang }: Props) {
       warehouse_id: form.warehouse_id,
       product_id: form.product_id,
       qty, sell_price: sellPrice,
-      cost_price: prod?.cost_price,
+      cost_price: costPrice,
       sale_type: form.sale_type,
       client_id: form.client_id || null,
+      batch: selectedStock?.batch || '',
       note: form.note, user_role: user.role,
     }]).select()
 
-    // Update stock
-    const { data: st } = await supabase
-      .from('stock').select('*').eq('product_id', form.product_id).single()
-    if (st) {
+    // Stock yangilash - tanlangan stock row dan kamaytirish
+    if (selectedStock) {
       await supabase.from('stock')
-        .update({ on_hand: Math.max(0, st.on_hand - qty) })
-        .eq('product_id', form.product_id)
+        .update({ on_hand: Math.max(0, selectedStock.on_hand - qty) })
+        .eq('id', selectedStock.id)
+    } else {
+      // Eski usul - product_id bo'yicha
+      const { data: st } = await supabase
+        .from('stock').select('*').eq('product_id', form.product_id).single()
+      if (st) {
+        await supabase.from('stock')
+          .update({ on_hand: Math.max(0, st.on_hand - qty) })
+          .eq('product_id', form.product_id)
+      }
     }
 
-    // Create debt if needed
+    // Qarz yaratish
     if (form.sale_type === 'debt' && form.client_id) {
       await supabase.from('debts').insert([{
         client_id: form.client_id,
@@ -88,7 +135,7 @@ export default function Issuance({ user, lang }: Props) {
       user_role: user.role, user_name: user.name,
       action: 'stock_issued', entity: 'product',
       record_id: form.product_id,
-      detail: `Chiqim: ${qty} ${prod?.unit} — ${prod?.name} (${form.sale_type})`,
+      detail: `Chiqim: ${qty} ${prod?.unit} — ${prod?.name} (${form.sale_type}) | Partiya: ${selectedStock?.batch || '—'}`,
     }])
 
     // PDF chek
@@ -99,8 +146,7 @@ export default function Issuance({ user, lang }: Props) {
         client: client?.name || '—',
         warehouse: wh?.name || '—',
         product: prod?.name || '—',
-        qty,
-        unit: prod?.unit || '',
+        qty, unit: prod?.unit || '',
         price: sellPrice,
         total: qty * sellPrice,
         saleType: form.sale_type,
@@ -113,7 +159,7 @@ export default function Issuance({ user, lang }: Props) {
     setModal(false)
     setForm({
       warehouse_id: role.warehouses[0], product_id: '',
-      qty: '', sell_price: '', sale_type: 'paid',
+      stock_id: '', qty: '', sell_price: '', sale_type: 'paid',
       client_id: '', due_date: '', note: ''
     })
     fetchData()
@@ -147,14 +193,14 @@ export default function Issuance({ user, lang }: Props) {
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                {[tr.date, 'Ombor', tr.name, tr.qty, tr.saleType, tr.client, tr.sellPrice, tr.note, 'Chek'].map(h => (
+                {[tr.date, 'Ombor', tr.name, 'Partiya', tr.qty, tr.saleType, tr.client, tr.sellPrice, tr.note, 'Chek'].map(h => (
                   <th key={h} className="px-4 py-2.5 text-left text-[10px] font-mono text-[#4a5568] uppercase tracking-wider bg-[#0d1018] border-b border-[#1e2535]">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {txs.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-16 text-[#4a5568]">
+                <tr><td colSpan={10} className="text-center py-16 text-[#4a5568]">
                   <div className="text-3xl mb-2">📤</div>{tr.noData}
                 </td></tr>
               ) : txs.map(tx => {
@@ -174,6 +220,7 @@ export default function Issuance({ user, lang }: Props) {
                       )}
                     </td>
                     <td className="px-4 py-3 font-bold text-[13px]">{tx.products?.name}</td>
+                    <td className="px-4 py-3 font-mono text-[11px] text-[#4a5568]">{tx.batch || '—'}</td>
                     <td className="px-4 py-3 font-mono font-bold text-[#ffa502]">−{tx.qty} {tx.products?.unit}</td>
                     <td className="px-4 py-3">
                       <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold font-mono border"
@@ -194,19 +241,15 @@ export default function Issuance({ user, lang }: Props) {
                             client: tx.clients?.name || '—',
                             warehouse: wh2?.name || '—',
                             product: tx.products?.name || '—',
-                            qty: tx.qty,
-                            unit: tx.products?.unit || '',
+                            qty: tx.qty, unit: tx.products?.unit || '',
                             price: tx.sell_price || 0,
                             total: tx.qty * (tx.sell_price || 0),
                             saleType: tx.sale_type,
-                            note: tx.note,
-                            seller: user.name,
+                            note: tx.note, seller: user.name,
                           })
                         }}
                         className="w-7 h-7 rounded-lg border border-[#1e2535] text-[#8896ae] hover:bg-[#00d4aa]/10 hover:border-[#00d4aa] hover:text-[#00d4aa] transition-all flex items-center justify-center text-xs"
-                      >
-                        🖨
-                      </button>
+                      >🖨</button>
                     </td>
                   </tr>
                 )
@@ -217,45 +260,86 @@ export default function Issuance({ user, lang }: Props) {
       </div>
 
       {modal && (
-        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm"
-          onClick={e => e.target === e.currentTarget && setModal(false)}>
+        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm">
           <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl p-7 w-[700px] max-w-[95vw] max-h-[90vh] overflow-y-auto">
-            <div className="text-[17px] font-black mb-5 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-[#ffa502]" />
-              {tr.newIssuance}
+            <div className="text-[17px] font-black mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-[#ffa502]" />
+                {tr.newIssuance}
+              </div>
+              <button onClick={() => setModal(false)}
+                className="w-8 h-8 rounded-lg border border-[#1e2535] text-[#4a5568] hover:text-white hover:border-[#ff4757] transition-all flex items-center justify-center">✕</button>
             </div>
+
             <div className="grid grid-cols-2 gap-3">
+              {/* Ombor */}
               <div>
                 <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">Ombor</label>
                 <select className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
                   value={form.warehouse_id}
-                  onChange={e => setForm((f: any) => ({ ...f, warehouse_id: e.target.value, product_id: '' }))}>
+                  onChange={e => setForm((f: any) => ({ ...f, warehouse_id: e.target.value, product_id: '', stock_id: '', sell_price: '' }))}>
                   {WAREHOUSES.filter(w => role.warehouses.includes(w.id)).map(w =>
                     <option key={w.id} value={w.id}>{w.icon} {w.name}</option>
                   )}
                 </select>
               </div>
+
+              {/* Mahsulot */}
               <div>
                 <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.name}</label>
                 <select className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
                   value={form.product_id}
-                  onChange={e => setForm((f: any) => ({ ...f, product_id: e.target.value }))}>
+                  onChange={e => onProductChange(e.target.value)}>
                   <option value="">— Tanlang —</option>
                   {whProducts.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
+
+              {/* Variant (razmer + partiya) */}
+              {form.product_id && productStockRows.length > 0 && (
+                <div className="col-span-2">
+                  <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">
+                    📐 Razmer / Partiya tanlang
+                  </label>
+                  <select className="w-full bg-[#131720] border border-[#ffa502]/40 rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#ffa502]"
+                    value={form.stock_id}
+                    onChange={e => onStockChange(e.target.value)}>
+                    <option value="">— Variant tanlang —</option>
+                    {productStockRows.map(s => (
+                      <option key={s.id} value={s.id}>{getVariantLabel(s)}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {form.product_id && productStockRows.length === 0 && (
+                <div className="col-span-2 bg-[#ff4757]/10 border border-[#ff4757]/20 rounded-xl px-4 py-3 text-[12px] text-[#ff4757]">
+                  ⚠️ Bu mahsulot stokda mavjud emas!
+                </div>
+              )}
+
+              {/* Miqdor */}
               <div>
                 <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.qty}</label>
                 <input type="number" className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa] placeholder:text-[#4a5568]"
                   placeholder="0" value={form.qty}
                   onChange={e => setForm((f: any) => ({ ...f, qty: e.target.value }))} />
+                {form.stock_id && (
+                  <div className="text-[10px] font-mono text-[#4a5568] mt-1">
+                    Mavjud: {stockRows.find(s => s.id === form.stock_id)?.on_hand || 0} dona
+                  </div>
+                )}
               </div>
+
+              {/* Sotuv narxi (avtomatik, lekin o'zgartiriladi) */}
               <div>
                 <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.sellPrice}</label>
                 <input type="number" className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa] placeholder:text-[#4a5568]"
                   placeholder="0" value={form.sell_price}
                   onChange={e => setForm((f: any) => ({ ...f, sell_price: e.target.value }))} />
               </div>
+
+              {/* Sotuv turi */}
               <div>
                 <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.saleType}</label>
                 <select className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
@@ -266,6 +350,8 @@ export default function Issuance({ user, lang }: Props) {
                   <option value="free">{tr.free}</option>
                 </select>
               </div>
+
+              {/* Mijoz */}
               <div>
                 <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.client}</label>
                 <select className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
@@ -275,6 +361,7 @@ export default function Issuance({ user, lang }: Props) {
                   {clients.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
+
               {form.sale_type === 'debt' && (
                 <div className="col-span-2">
                   <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.dueDate}</label>
@@ -284,12 +371,14 @@ export default function Issuance({ user, lang }: Props) {
                 </div>
               )}
             </div>
+
             <div className="mt-3">
               <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">{tr.note}</label>
               <textarea className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa] placeholder:text-[#4a5568] resize-none h-20"
                 placeholder="Ixtiyoriy..." value={form.note}
                 onChange={e => setForm((f: any) => ({ ...f, note: e.target.value }))} />
             </div>
+
             <div className="flex gap-2 justify-end mt-5 pt-5 border-t border-[#1e2535]">
               <button onClick={() => setModal(false)} className="px-5 py-2.5 rounded-xl border border-[#1e2535] text-[#8896ae] text-[13px] font-semibold hover:border-[#28324a] transition-all">{tr.cancel}</button>
               <button onClick={handleSubmit} disabled={saving} className="px-5 py-2.5 bg-[#ffa502] text-[#0c0800] font-bold rounded-xl text-[13px] hover:bg-[#ffb830] transition-all disabled:opacity-50">

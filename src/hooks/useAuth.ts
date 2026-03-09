@@ -7,13 +7,11 @@ export function useAuth() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Sessiyani tekshirish
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) loadProfile(session.user.id)
       else setLoading(false)
     })
 
-    // Auth o'zgarishlarini kuzatish
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) loadProfile(session.user.id)
       else { setUser(null); setLoading(false) }
@@ -34,9 +32,23 @@ export function useAuth() {
     setLoading(false)
   }
 
-  async function login(email: string, password: string): Promise<string | null> {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) return error.message
+  async function login(username: string, password: string): Promise<string | null> {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('username', username)
+      .single()
+
+    if (!profile?.email) {
+      return 'Foydalanuvchi topilmadi!'
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: profile.email,
+      password,
+    })
+
+    if (error) return 'Login yoki parol noto\'g\'ri!'
     return null
   }
 

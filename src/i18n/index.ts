@@ -1,10 +1,9 @@
 import { uz } from './uz'
 import { ru } from './ru'
-import { en } from './en'
 import type { Language } from '../types'
 
-export const translations = { uz, ru, en }
+export const translations = { uz, ru }
 
 export function t(lang: Language) {
-  return translations[lang]
+  return translations[lang] ?? uz
 }
