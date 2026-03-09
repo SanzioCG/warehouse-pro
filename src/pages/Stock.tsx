@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { User, Language } from '../types'
 import { ROLES, WAREHOUSES } from '../config/roles'
@@ -13,6 +13,7 @@ export default function Stock({ user, lang }: Props) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [whFilter, setWhFilter] = useState('all')
+  const [batchFilter, setBatchFilter] = useState('all')
   const [editRow, setEditRow] = useState<any | null>(null)
   const [editForm, setEditForm] = useState<any>({})
   const [saving, setSaving] = useState(false)
@@ -49,12 +50,39 @@ export default function Stock({ user, lang }: Props) {
     setLoading(false)
   }
 
-  const filtered = rows.filter(r => {
+  const batchOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        (rows || [])
+          .filter(r => r.products && role.warehouses.includes(r.products.warehouse_id))
+          .filter(r => whFilter === 'all' || r.products.warehouse_id === whFilter)
+          .map(r => r.batch)
+          .filter((b: string) => !!b)
+      )
+    ).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+  }, [rows, role.warehouses, whFilter])
+
+  const filtered = rows
+  .filter(r => {
     if (!r.products || !role.warehouses.includes(r.products.warehouse_id)) return false
+
     const matchW = whFilter === 'all' || r.products.warehouse_id === whFilter
-    const matchS = r.products.name.toLowerCase().includes(search.toLowerCase())
-    return matchW && matchS
+    const matchB = batchFilter === 'all' || (r.batch || '') === batchFilter
+    const q = search.toLowerCase()
+
+    const matchS =
+      r.products.name.toLowerCase().includes(q) ||
+      String(r.products.sku || '').toLowerCase().includes(q)
+
+    return matchW && matchB && matchS
   })
+  .sort((a, b) =>
+    String(a.products?.sku || '').localeCompare(
+      String(b.products?.sku || ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' }
+    )
+  )
 
   function openEdit(r: any) {
     setEditRow(r)
@@ -72,7 +100,6 @@ export default function Stock({ user, lang }: Props) {
     if (!editRow) return
     setSaving(true)
 
-    // Narx faqat stock qatoriga saqlanadi, products ga emas!
     await supabase.from('stock').update({
       on_hand: Number(editForm.on_hand),
       reserved: Number(editForm.reserved),
@@ -80,7 +107,6 @@ export default function Stock({ user, lang }: Props) {
       sell_price: Number(editForm.sell_price),
     }).eq('id', editRow.id)
 
-    // Faqat threshold products ga saqlanadi
     await supabase.from('products').update({
       threshold: Number(editForm.threshold),
     }).eq('id', editRow.products?.id)
@@ -92,7 +118,6 @@ export default function Stock({ user, lang }: Props) {
       detail: `Stock tahrirlandi: ${editRow.products?.name} | on_hand: ${editForm.on_hand}`,
     }])
 
-    // Localda yangilash
     setRows(prev => prev.map(r => r.id === editRow.id ? {
       ...r,
       on_hand: Number(editForm.on_hand),
@@ -124,15 +149,30 @@ export default function Stock({ user, lang }: Props) {
             onChange={e => setSearch(e.target.value)}
           />
         </div>
+
         <select
           className="bg-[#0d1018] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
           value={whFilter}
-          onChange={e => setWhFilter(e.target.value)}
+          onChange={e => {
+            setWhFilter(e.target.value)
+            setBatchFilter('all')
+          }}
         >
           <option value="all">{tr.allWarehouses}</option>
           {WAREHOUSES.filter(w => role.warehouses.includes(w.id)).map(w =>
             <option key={w.id} value={w.id}>{w.icon} {w.name}</option>
           )}
+        </select>
+
+        <select
+          className="bg-[#0d1018] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+          value={batchFilter}
+          onChange={e => setBatchFilter(e.target.value)}
+        >
+          <option value="all">Barcha partiyalar</option>
+          {batchOptions.map(batch => (
+            <option key={batch} value={batch}>{batch}</option>
+          ))}
         </select>
       </div>
 
@@ -171,7 +211,6 @@ export default function Stock({ user, lang }: Props) {
                 const wh = WAREHOUSES.find(w => w.id === p?.warehouse_id)
                 return (
                   <tr key={r.id} className="border-b border-[#1e2535] hover:bg-[#131720] transition-all">
-                    {/* Rasm */}
                     <td className="px-3 py-2">
                       {p?.image_url ? (
                         <img
@@ -186,13 +225,11 @@ export default function Stock({ user, lang }: Props) {
                     </td>
                     <td className="px-4 py-3 text-[11px] font-mono text-[#4a5568]">{p?.sku}</td>
                     <td className="px-4 py-3 font-bold text-[13px]">{p?.name}</td>
-                    {/* Razmer */}
                     <td className="px-4 py-3 text-[11px] font-mono text-[#8896ae]">
                       {r.attrs && Object.keys(r.attrs).length > 0
                         ? Object.values(r.attrs).join(' × ')
                         : '—'}
                     </td>
-                    {/* Partiya */}
                     <td className="px-4 py-3 text-[11px] font-mono text-[#4a5568]">{r.batch || '—'}</td>
                     <td className="px-4 py-3">
                       {wh && (
@@ -241,8 +278,6 @@ export default function Stock({ user, lang }: Props) {
         )}
       </div>
 
-
-      {/* Zoom Modal */}
       {zoomImg && (
         <div
           className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center backdrop-blur-sm cursor-zoom-out"
@@ -261,7 +296,7 @@ export default function Stock({ user, lang }: Props) {
           </div>
         </div>
       )}
-      {/* Edit Modal */}
+
       {editRow && (
         <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm">
           <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl p-7 w-[460px] max-w-[95vw]">
@@ -335,7 +370,6 @@ export default function Stock({ user, lang }: Props) {
         </div>
       )}
 
-      {/* Delete Modal */}
       {deleteRow && (
         <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm">
           <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl p-7 w-[420px] max-w-[95vw]">
