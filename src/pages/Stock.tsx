@@ -1,149 +1,651 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import type { User, Language } from '../types'
-import { ROLES, WAREHOUSES } from '../config/roles'
+import { ROLES, WAREHOUSES, WAREHOUSE_PARAMS } from '../config/roles'
 import { t } from '../i18n'
 
-interface Props { user: User; lang: Language }
+interface Props {
+  user: User
+  lang: Language
+}
+
+interface Product {
+  id: string
+  name: string
+  sku: string
+  unit: string
+  warehouse_id: string
+  threshold: number
+  image_url: string | null
+  attrs: Record<string, string> | null
+}
+
+interface StockRow {
+  id: string
+  on_hand: number
+  reserved: number
+  solded: number
+  batch: string | null
+  cost_price: number | null
+  sell_price: number | null
+  attrs: Record<string, string> | null
+  products: Product | null
+}
+
+interface EditFormData {
+  on_hand: number
+  reserved: number
+  cost_price: number
+  sell_price: number
+  threshold: number
+  attrs: Record<string, string>
+}
+
+const STOCK_COLS_STORAGE_KEY = 'stock-table-col-widths-v5'
+
+const defaultColWidths = {
+  no: 58,
+  image: 68,
+  sku: 150,
+  name: 260,
+  size: 180,
+  batch: 110,
+  warehouse: 170,
+  onHand: 90,
+  reserved: 90,
+  available: 90,
+  solded: 95,
+  cost: 110,
+  sell: 120,
+  threshold: 100,
+  status: 100,
+  actions: 88,
+}
+
+type ColKey = keyof typeof defaultColWidths
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function toStringOrNull(value: unknown): string | null {
+  if (value == null) return null
+  return String(value)
+}
+
+function toNumberOrZero(value: unknown): number {
+  const num = Number(value)
+  return Number.isFinite(num) ? num : 0
+}
+
+function toNumberOrNull(value: unknown): number | null {
+  if (value == null || value === '') return null
+  const num = Number(value)
+  return Number.isFinite(num) ? num : null
+}
+
+function toRecordString(value: unknown): Record<string, string> | null {
+  if (!isRecord(value)) return null
+
+  const out: Record<string, string> = {}
+
+  for (const [k, v] of Object.entries(value)) {
+    if (v == null) continue
+    out[k] = String(v)
+  }
+
+  return out
+}
+
+function normalizeProduct(value: unknown): Product | null {
+  if (!isRecord(value)) return null
+
+  return {
+    id: String(value.id ?? ''),
+    name: String(value.name ?? ''),
+    sku: String(value.sku ?? ''),
+    unit: String(value.unit ?? ''),
+    warehouse_id: String(value.warehouse_id ?? ''),
+    threshold: toNumberOrZero(value.threshold),
+    image_url: toStringOrNull(value.image_url),
+    attrs: toRecordString(value.attrs),
+  }
+}
+
+function normalizeStockRow(value: unknown): StockRow | null {
+  if (!isRecord(value)) return null
+
+  return {
+    id: String(value.id ?? ''),
+    on_hand: toNumberOrZero(value.on_hand),
+    reserved: toNumberOrZero(value.reserved),
+    solded: 0,
+    batch: toStringOrNull(value.batch),
+    cost_price: toNumberOrNull(value.cost_price),
+    sell_price: toNumberOrNull(value.sell_price),
+    attrs: toRecordString(value.attrs),
+    products: normalizeProduct(value.products),
+  }
+}
+
+function normalizeStockRows(value: unknown): StockRow[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map(normalizeStockRow)
+    .filter((row): row is StockRow => row !== null)
+}
 
 export default function Stock({ user, lang }: Props) {
   const tr = t(lang)
   const role = ROLES[user.role]
-  const [rows, setRows] = useState<any[]>([])
+
+  const [rows, setRows] = useState<StockRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
   const [search, setSearch] = useState('')
   const [whFilter, setWhFilter] = useState('all')
   const [batchFilter, setBatchFilter] = useState('all')
-  const [editRow, setEditRow] = useState<any | null>(null)
-  const [editForm, setEditForm] = useState<any>({})
+
+  const [editRow, setEditRow] = useState<StockRow | null>(null)
+  const [editForm, setEditForm] = useState<EditFormData>({
+    on_hand: 0,
+    reserved: 0,
+    cost_price: 0,
+    sell_price: 0,
+    threshold: 0,
+    attrs: {},
+  })
+
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
-  const canEdit = ['leader', 'manager_saidaziz', 'manager_eldor'].includes(user.role)
-  const [deleteRow, setDeleteRow] = useState<any | null>(null)
+  const [deleteRow, setDeleteRow] = useState<StockRow | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [zoomImg, setZoomImg] = useState<string | null>(null)
 
-  async function handleDelete() {
-    if (!deleteRow) return
-    setDeleting(true)
-    await supabase.from('stock').delete().eq('id', deleteRow.id)
-    await supabase.from('audit_logs').insert([{
-      user_role: user.role, user_name: user.name,
-      action: 'stock_deleted', entity: 'stock',
-      record_id: deleteRow.id,
-      detail: `Stock o'chirildi: ${deleteRow.products?.name}`,
-    }])
-    setRows(prev => prev.filter(r => r.id !== deleteRow.id))
-    setDeleting(false)
-    setDeleteRow(null)
+  const canEdit = ['leader', 'manager_saidaziz', 'manager_eldor'].includes(user.role)
+
+  const [colWidths, setColWidths] = useState<Record<ColKey, number>>(() => {
+    try {
+      const saved = localStorage.getItem(STOCK_COLS_STORAGE_KEY)
+      if (!saved) return defaultColWidths
+
+      const parsed = JSON.parse(saved)
+      if (!isRecord(parsed)) return defaultColWidths
+
+      return {
+        ...defaultColWidths,
+        ...Object.fromEntries(
+          Object.entries(defaultColWidths).map(([key, fallback]) => {
+            const raw = parsed[key]
+            const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback
+            return [key, value]
+          })
+        ),
+      } as Record<ColKey, number>
+    } catch {
+      return defaultColWidths
+    }
+  })
+
+  const tableWrapRef = useRef<HTMLDivElement | null>(null)
+  const resizeLineRef = useRef<HTMLDivElement | null>(null)
+  const resizeRef = useRef<{
+    key: ColKey
+    startX: number
+    startWidth: number
+  } | null>(null)
+  const rafRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STOCK_COLS_STORAGE_KEY, JSON.stringify(colWidths))
+    } catch (err) {
+      console.warn('LocalStorage saqlashda xatolik:', err)
+    }
+  }, [colWidths])
+
+  const resetColWidths = useCallback(() => {
+    setColWidths(defaultColWidths)
+    try {
+      localStorage.removeItem(STOCK_COLS_STORAGE_KEY)
+    } catch (err) {
+      console.warn('LocalStorage tozalashda xatolik:', err)
+    }
+  }, [])
+
+  const showResizeLine = useCallback((clientX: number) => {
+    const wrap = tableWrapRef.current
+    const line = resizeLineRef.current
+    if (!wrap || !line) return
+
+    const rect = wrap.getBoundingClientRect()
+    const left = Math.max(0, Math.min(clientX - rect.left + wrap.scrollLeft, wrap.scrollWidth))
+    line.style.opacity = '1'
+    line.style.transform = `translateX(${left}px)`
+  }, [])
+
+  const hideResizeLine = useCallback(() => {
+    const line = resizeLineRef.current
+    if (!line) return
+    line.style.opacity = '0'
+  }, [])
+
+  const startResize = useCallback(
+    (e: ReactMouseEvent<HTMLButtonElement>, key: ColKey) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      resizeRef.current = {
+        key,
+        startX: e.clientX,
+        startWidth: colWidths[key],
+      }
+
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      showResizeLine(e.clientX)
+    },
+    [colWidths, showResizeLine]
+  )
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return
+
+      const { key, startX, startWidth } = resizeRef.current
+      const diff = e.clientX - startX
+      const nextWidth = Math.max(60, Math.min(520, startWidth + diff))
+
+      showResizeLine(e.clientX)
+
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      rafRef.current = requestAnimationFrame(() => {
+        setColWidths(prev => {
+          if (prev[key] === nextWidth) return prev
+          return { ...prev, [key]: nextWidth }
+        })
+      })
+    }
+
+    const onMouseUp = () => {
+      resizeRef.current = null
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      hideResizeLine()
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [hideResizeLine, showResizeLine])
+
+  const fetchStock = useCallback(async () => {
+  setLoading(true)
+  setError(null)
+
+  try {
+    const { data: stockData, error: stockError } = await supabase
+      .from('stock')
+      .select(`
+        id,
+        on_hand,
+        reserved,
+        batch,
+        cost_price,
+        sell_price,
+        attrs,
+        products:product_id (
+          id,
+          name,
+          sku,
+          unit,
+          warehouse_id,
+          threshold,
+          image_url,
+          attrs
+        )
+      `)
+
+    if (stockError) throw stockError
+
+    const normalizedRows = normalizeStockRows(stockData)
+
+    const soldMap = new Map<string, number>()
+
+    try {
+      const { data: txData, error: txError } = await supabase
+        .from('transactions')
+        .select('stock_id, qty, type')
+        .eq('type', 'issuance')
+
+      if (txError) {
+        console.warn('Transactions yuklashda xatolik:', txError)
+      } else if (Array.isArray(txData)) {
+        for (const tx of txData) {
+          if (!isRecord(tx)) continue
+
+          const stockId = String(tx.stock_id ?? '')
+          const qty = toNumberOrZero(tx.qty)
+
+          if (!stockId) continue
+
+          soldMap.set(stockId, (soldMap.get(stockId) ?? 0) + qty)
+        }
+      }
+    } catch (txErr) {
+      console.warn('Transactions parse/yuklash xatoligi:', txErr)
+    }
+
+    const mergedRows: StockRow[] = normalizedRows.map(row => ({
+      ...row,
+      solded: soldMap.get(row.id) ?? 0,
+    }))
+
+    setRows(mergedRows)
+  } catch (err) {
+    console.error('Stock yuklanmadi:', err)
+    setError("Ma'lumotlarni yuklashda xatolik yuz berdi")
+  } finally {
+    setLoading(false)
+  }
+}, [])
+
+  useEffect(() => {
+    fetchStock()
+  }, [fetchStock, user.role])
+
+  const openEdit = useCallback((row: StockRow) => {
+    setEditRow(row)
+    setEditForm({
+      on_hand: row.on_hand,
+      reserved: row.reserved,
+      cost_price: row.cost_price ?? 0,
+      sell_price: row.sell_price ?? 0,
+      threshold: row.products?.threshold ?? 0,
+      attrs: row.attrs ?? {},
+    })
+    setSavedMsg(false)
+    setSaveError(null)
+  }, [])
+
+  const handleEditFormChange = useCallback(
+    (field: keyof Omit<EditFormData, 'attrs'>, value: string) => {
+      setEditForm(prev => ({
+        ...prev,
+        [field]: value === '' ? 0 : Number(value),
+      }))
+    },
+    []
+  )
+
+  const handleAttrChange = useCallback((key: string, value: string) => {
+    setEditForm(prev => ({
+      ...prev,
+      attrs: {
+        ...prev.attrs,
+        [key]: value,
+      },
+    }))
+  }, [])
+
+  const handleSave = async () => {
+    if (!editRow) return
+
+    setSaving(true)
+    setSaveError(null)
+
+    try {
+      const { error: stockError } = await supabase
+        .from('stock')
+        .update({
+          on_hand: editForm.on_hand,
+          reserved: editForm.reserved,
+          cost_price: editForm.cost_price,
+          sell_price: editForm.sell_price,
+          attrs: editForm.attrs,
+        })
+        .eq('id', editRow.id)
+
+      if (stockError) throw stockError
+
+      if (editRow.products?.id) {
+        const { error: productError } = await supabase
+          .from('products')
+          .update({
+            threshold: editForm.threshold,
+          })
+          .eq('id', editRow.products.id)
+
+        if (productError) throw productError
+      }
+
+      const { error: auditError } = await supabase
+        .from('audit_logs')
+        .insert([
+          {
+            user_role: user.role,
+            user_name: user.name,
+            action: 'stock_edited',
+            entity: 'stock',
+            record_id: editRow.id,
+            detail: `Stock tahrirlandi: ${editRow.products?.name || 'Unknown'} | on_hand: ${editForm.on_hand}`,
+          },
+        ])
+
+      if (auditError) throw auditError
+
+      setRows(prev =>
+        prev.map(row =>
+          row.id === editRow.id
+            ? {
+                ...row,
+                on_hand: editForm.on_hand,
+                reserved: editForm.reserved,
+                cost_price: editForm.cost_price,
+                sell_price: editForm.sell_price,
+                attrs: editForm.attrs,
+                products: row.products
+                  ? {
+                      ...row.products,
+                      threshold: editForm.threshold,
+                    }
+                  : null,
+              }
+            : row
+        )
+      )
+
+      setSavedMsg(true)
+      setTimeout(() => setSavedMsg(false), 2000)
+    } catch (err) {
+      console.error('Saqlashda xatolik:', err)
+      setSaveError('Saqlashda xatolik yuz berdi')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  useEffect(() => { fetchStock() }, [])
+  const handleDelete = async () => {
+    if (!deleteRow) return
+    setDeleting(true)
 
-  async function fetchStock() {
-    setLoading(true)
-    const { data } = await supabase
-      .from('stock')
-      .select('*, products(id, name, sku, unit, warehouse_id, threshold, cost_price, sell_price, image_url, attrs)')
-    setRows(data || [])
-    setLoading(false)
+    try {
+      const { error: deleteError } = await supabase
+        .from('stock')
+        .delete()
+        .eq('id', deleteRow.id)
+
+      if (deleteError) throw deleteError
+
+      const { error: auditError } = await supabase
+        .from('audit_logs')
+        .insert([
+          {
+            user_role: user.role,
+            user_name: user.name,
+            action: 'stock_deleted',
+            entity: 'stock',
+            record_id: deleteRow.id,
+            detail: `Stock o'chirildi: ${deleteRow.products?.name || 'Unknown'}`,
+          },
+        ])
+
+      if (auditError) throw auditError
+
+      setRows(prev => prev.filter(row => row.id !== deleteRow.id))
+      setDeleteRow(null)
+    } catch (err) {
+      console.error("O'chirishda xatolik:", err)
+      alert("O'chirishda xatolik yuz berdi")
+    } finally {
+      setDeleting(false)
+    }
   }
 
   const batchOptions = useMemo(() => {
     return Array.from(
       new Set(
-        (rows || [])
+        rows
           .filter(r => r.products && role.warehouses.includes(r.products.warehouse_id))
-          .filter(r => whFilter === 'all' || r.products.warehouse_id === whFilter)
+          .filter(r => whFilter === 'all' || r.products?.warehouse_id === whFilter)
           .map(r => r.batch)
-          .filter((b: string) => !!b)
+          .filter((b): b is string => Boolean(b))
       )
-    ).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+    ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
   }, [rows, role.warehouses, whFilter])
 
-  const filtered = rows
-  .filter(r => {
-    if (!r.products || !role.warehouses.includes(r.products.warehouse_id)) return false
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
 
-    const matchW = whFilter === 'all' || r.products.warehouse_id === whFilter
-    const matchB = batchFilter === 'all' || (r.batch || '') === batchFilter
-    const q = search.toLowerCase()
+    return rows
+      .filter(r => {
+        const p = r.products
+        if (!p) return false
+        if (!role.warehouses.includes(p.warehouse_id)) return false
 
-    const matchS =
-      r.products.name.toLowerCase().includes(q) ||
-      String(r.products.sku || '').toLowerCase().includes(q)
+        const matchW = whFilter === 'all' || p.warehouse_id === whFilter
+        const matchB = batchFilter === 'all' || (r.batch || '') === batchFilter
+        const matchS =
+          q === '' ||
+          p.name.toLowerCase().includes(q) ||
+          p.sku.toLowerCase().includes(q)
 
-    return matchW && matchB && matchS
-  })
-  .sort((a, b) =>
-    String(a.products?.sku || '').localeCompare(
-      String(b.products?.sku || ''),
-      undefined,
-      { numeric: true, sensitivity: 'base' }
-    )
+        return matchW && matchB && matchS
+      })
+      .sort((a, b) => {
+        const skuCompare = String(a.products?.sku || '').localeCompare(
+          String(b.products?.sku || ''),
+          undefined,
+          { numeric: true, sensitivity: 'base' }
+        )
+
+        if (skuCompare !== 0) return skuCompare
+
+        return String(a.batch || '').localeCompare(String(b.batch || ''), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        })
+      })
+  }, [rows, role.warehouses, whFilter, batchFilter, search])
+
+  const fmt = useCallback((n: number | null | undefined): string => {
+    if (n == null) return '0'
+    return n.toLocaleString('uz-UZ')
+  }, [])
+
+  const formatAttrs = useCallback((attrs: Record<string, string> | null): string => {
+    if (!attrs) return '—'
+    const values = Object.values(attrs).filter(v => String(v).trim())
+    return values.length ? values.join(' × ') : '—'
+  }, [])
+
+  const renderWarehouseParams = useCallback(
+    (warehouseId: string, attrs: Record<string, string>) => {
+      const params = WAREHOUSE_PARAMS[warehouseId] || []
+      if (!params.length) return null
+
+      return (
+        <>
+          <div className="my-4 border-t border-[#1e2535]" />
+
+          <div className="mb-3 flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-[#4a5568]">
+            <span>📐 Razmerlar</span>
+            <span className="text-[#8896ae]">({warehouseId})</span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            {params.map((param: { key: string; label: string; type?: string }) => (
+              <div key={param.key}>
+                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
+                  {param.label}
+                </label>
+                <input
+                  type={param.type || 'text'}
+                  value={attrs[param.key] || ''}
+                  onChange={e => handleAttrChange(param.key, e.target.value)}
+                  placeholder={param.label}
+                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none placeholder:text-[#4a5568] focus:border-[#00d4aa]"
+                />
+              </div>
+            ))}
+          </div>
+        </>
+      )
+    },
+    [handleAttrChange]
   )
 
-  function openEdit(r: any) {
-    setEditRow(r)
-    setEditForm({
-      on_hand: r.on_hand,
-      reserved: r.reserved,
-      cost_price: r.cost_price || 0,
-      sell_price: r.sell_price || 0,
-      threshold: r.products?.threshold || 0,
-    })
-    setSavedMsg(false)
-  }
+  const totalCols = 11 + (role.canSeeCost ? 2 : 0) + 2 + (canEdit ? 1 : 0)
 
-  async function handleSave() {
-    if (!editRow) return
-    setSaving(true)
+  const renderTH = useCallback(
+    (label: string, key: ColKey, hasRightBorder = true) => {
+      const width = colWidths[key]
 
-    await supabase.from('stock').update({
-      on_hand: Number(editForm.on_hand),
-      reserved: Number(editForm.reserved),
-      cost_price: Number(editForm.cost_price),
-      sell_price: Number(editForm.sell_price),
-    }).eq('id', editRow.id)
+      return (
+        <th
+          key={key}
+          style={{ width, minWidth: width, maxWidth: width }}
+          className={`group relative bg-[#0d1018] px-4 py-2.5 text-left text-[10px] font-mono uppercase tracking-wider text-[#4a5568] border-b border-[#1e2535] ${
+            hasRightBorder ? 'border-r' : ''
+          }`}
+        >
+          <div className="truncate pr-3">{label}</div>
 
-    await supabase.from('products').update({
-      threshold: Number(editForm.threshold),
-    }).eq('id', editRow.products?.id)
-
-    await supabase.from('audit_logs').insert([{
-      user_role: user.role, user_name: user.name,
-      action: 'stock_edited', entity: 'stock',
-      record_id: editRow.id,
-      detail: `Stock tahrirlandi: ${editRow.products?.name} | on_hand: ${editForm.on_hand}`,
-    }])
-
-    setRows(prev => prev.map(r => r.id === editRow.id ? {
-      ...r,
-      on_hand: Number(editForm.on_hand),
-      reserved: Number(editForm.reserved),
-      cost_price: Number(editForm.cost_price),
-      sell_price: Number(editForm.sell_price),
-      products: {
-        ...r.products,
-        threshold: Number(editForm.threshold),
-      }
-    } : r))
-
-    setSaving(false)
-    setSavedMsg(true)
-    setTimeout(() => setSavedMsg(false), 2000)
-  }
-
-  const fmt = (n: number) => n?.toLocaleString('uz-UZ')
+          <button
+            type="button"
+            onMouseDown={e => startResize(e, key)}
+            className="absolute right-0 top-0 h-full w-3 cursor-col-resize bg-transparent outline-none"
+            aria-label={`${label || 'column'} resize`}
+            title="Resize column"
+          >
+            <span className="absolute bottom-[18%] right-[5px] top-[18%] w-px bg-[#253047] transition-all group-hover:bg-[#00d4aa]" />
+          </button>
+        </th>
+      )
+    },
+    [colWidths, startResize]
+  )
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="relative flex-1 min-w-[180px]">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#4a5568] text-sm">🔍</span>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative min-w-[180px] flex-1">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#4a5568]">🔍</span>
           <input
-            className="w-full bg-[#0d1018] border border-[#1e2535] rounded-xl pl-9 pr-4 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa] transition-all placeholder:text-[#4a5568]"
+            className="w-full rounded-xl border border-[#1e2535] bg-[#0d1018] py-2.5 pl-9 pr-4 text-[13px] text-white outline-none transition-all placeholder:text-[#4a5568] focus:border-[#00d4aa]"
             placeholder={tr.search}
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -151,7 +653,7 @@ export default function Stock({ user, lang }: Props) {
         </div>
 
         <select
-          className="bg-[#0d1018] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+          className="rounded-xl border border-[#1e2535] bg-[#0d1018] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
           value={whFilter}
           onChange={e => {
             setWhFilter(e.target.value)
@@ -159,120 +661,337 @@ export default function Stock({ user, lang }: Props) {
           }}
         >
           <option value="all">{tr.allWarehouses}</option>
-          {WAREHOUSES.filter(w => role.warehouses.includes(w.id)).map(w =>
-            <option key={w.id} value={w.id}>{w.icon} {w.name}</option>
-          )}
+          {WAREHOUSES.filter(w => role.warehouses.includes(w.id)).map(w => (
+            <option key={w.id} value={w.id}>
+              {w.icon} {w.name}
+            </option>
+          ))}
         </select>
 
         <select
-          className="bg-[#0d1018] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+          className="rounded-xl border border-[#1e2535] bg-[#0d1018] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
           value={batchFilter}
           onChange={e => setBatchFilter(e.target.value)}
         >
           <option value="all">Barcha partiyalar</option>
           {batchOptions.map(batch => (
-            <option key={batch} value={batch}>{batch}</option>
+            <option key={batch} value={batch}>
+              {batch}
+            </option>
           ))}
         </select>
+
+        <button
+          onClick={resetColWidths}
+          className="rounded-xl border border-[#1e2535] px-4 py-2.5 text-[13px] font-semibold text-[#8896ae] transition-all hover:border-[#00d4aa] hover:text-[#00d4aa]"
+        >
+          Ustunlarni tiklash
+        </button>
       </div>
 
-      <div className="bg-[#0d1018] border border-[#1e2535] rounded-2xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-[#1e2535] bg-[#131720] flex items-center gap-2">
-          <div className="w-0.5 h-4 rounded bg-[#00d4aa]" />
-          <span className="font-bold text-[14px]">{tr.stock} ({filtered.length})</span>
+      <div
+        ref={tableWrapRef}
+        className="relative overflow-auto rounded-2xl border border-[#1e2535] bg-[#0d1018]"
+      >
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-[#1e2535] bg-[#131720] px-5 py-3">
+          <div className="h-4 w-0.5 rounded bg-[#00d4aa]" />
+          <span className="text-[14px] font-bold">
+            {tr.stock} ({filtered.length})
+          </span>
         </div>
+
+        <div
+          ref={resizeLineRef}
+          className="pointer-events-none absolute bottom-0 top-0 z-30 w-px bg-[#00d4aa] opacity-0 shadow-[0_0_12px_rgba(0,212,170,0.55)] transition-opacity"
+        />
+
         {loading ? (
-          <div className="text-center py-16 text-[#4a5568]">
-            <div className="text-3xl mb-2 animate-pulse">🗃️</div>
-            <div className="font-mono text-sm">Loading...</div>
+          <div className="space-y-2 p-4">
+            {[1, 2, 3, 4, 5].map(i => (
+              <div key={i} className="h-16 animate-pulse rounded-lg bg-[#131720]" />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="py-16 text-center text-[#ff4757]">
+            <div className="mb-2 text-3xl">⚠️</div>
+            <div className="text-sm font-mono">{error}</div>
+            <button
+              onClick={fetchStock}
+              className="mt-4 rounded-xl bg-[#0095ff] px-4 py-2 text-white"
+            >
+              Qayta urinish
+            </button>
           </div>
         ) : (
-          <table className="w-full border-collapse">
+          <table className="min-w-max table-fixed border-collapse">
             <thead>
               <tr>
-                {['', tr.sku, tr.name, 'Razmer', 'Partiya', 'Ombor', tr.onHand, tr.reserved, tr.available,
-                  ...(role.canSeeCost ? [tr.costPrice, 'Sotuv narxi'] : []),
-                  tr.threshold, tr.status,
-                  ...(canEdit ? [''] : [])
-                ].map((h, i) => (
-                  <th key={i} className="px-4 py-2.5 text-left text-[10px] font-mono text-[#4a5568] uppercase tracking-wider bg-[#0d1018] border-b border-[#1e2535]">{h}</th>
-                ))}
+                {renderTH('№', 'no')}
+                {renderTH('', 'image')}
+                {renderTH(tr.sku, 'sku')}
+                {renderTH(tr.name, 'name')}
+                {renderTH('Razmer', 'size')}
+                {renderTH('Partiya', 'batch')}
+                {renderTH('Ombor', 'warehouse')}
+                {renderTH(tr.onHand, 'onHand')}
+                {renderTH(tr.reserved, 'reserved')}
+                {renderTH(tr.available, 'available')}
+                {renderTH('Sotilgan', 'solded')}
+
+                {role.canSeeCost && (
+                  <>
+                    {renderTH(tr.costPrice, 'cost')}
+                    {renderTH('Sotuv narxi', 'sell')}
+                  </>
+                )}
+
+                {renderTH(tr.threshold, 'threshold')}
+                {renderTH(tr.status, 'status')}
+                {canEdit && renderTH('', 'actions', false)}
               </tr>
             </thead>
+
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={10} className="text-center py-16 text-[#4a5568]">
-                  <div className="text-3xl mb-2">🗃️</div>{tr.noData}
-                </td></tr>
-              ) : filtered.map(r => {
-                const p = r.products
-                const available = r.on_hand - r.reserved
-                const isLow = r.on_hand <= (p?.threshold || 0)
-                const wh = WAREHOUSES.find(w => w.id === p?.warehouse_id)
-                return (
-                  <tr key={r.id} className="border-b border-[#1e2535] hover:bg-[#131720] transition-all">
-                    <td className="px-3 py-2">
-                      {p?.image_url ? (
-                        <img
-                          src={p.image_url}
-                          alt={p.name}
-                          onClick={() => setZoomImg(p.image_url)}
-                          className="w-10 h-10 rounded-lg object-cover border border-[#1e2535] cursor-zoom-in hover:border-[#00d4aa] hover:scale-110 transition-all"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 rounded-lg bg-[#131720] border border-[#1e2535] flex items-center justify-center text-lg">📦</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-[11px] font-mono text-[#4a5568]">{p?.sku}</td>
-                    <td className="px-4 py-3 font-bold text-[13px]">{p?.name}</td>
-                    <td className="px-4 py-3 text-[11px] font-mono text-[#8896ae]">
-                      {r.attrs && Object.keys(r.attrs).length > 0
-                        ? Object.values(r.attrs).join(' × ')
-                        : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-[11px] font-mono text-[#4a5568]">{r.batch || '—'}</td>
-                    <td className="px-4 py-3">
-                      {wh && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold border"
-                          style={{ background: wh.color + '18', color: wh.color, borderColor: wh.color + '30' }}>
-                          {wh.icon} {wh.name}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-mono font-bold text-[13px]">{r.on_hand}</td>
-                    <td className="px-4 py-3 font-mono text-[#ffa502] text-[13px]">{r.reserved}</td>
-                    <td className="px-4 py-3 font-mono font-bold text-[13px]"
-                      style={{ color: available <= 0 ? '#ff4757' : '#00d4aa' }}>
-                      {available}
-                    </td>
-                    {role.canSeeCost && (
-                      <>
-                        <td className="px-4 py-3 font-mono text-[12px] text-[#8896ae]">${fmt(r.cost_price)}</td>
-                        <td className="px-4 py-3 font-mono text-[12px] text-[#00d4aa]">${fmt(r.sell_price)}</td>
-                      </>
-                    )}
-                    <td className="px-4 py-3 font-mono text-[12px] text-[#4a5568]">{p?.threshold}</td>
-                    <td className="px-4 py-3">
-                      {r.on_hand === 0
-                        ? <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-[#ff4757]/10 text-[#ff4757] border border-[#ff4757]/20">{tr.finished}</span>
-                        : isLow
-                        ? <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-[#ffa502]/10 text-[#ffa502] border border-[#ffa502]/20">{tr.low}</span>
-                        : <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-[#00d4aa]/10 text-[#00d4aa] border border-[#00d4aa]/20">{tr.normal}</span>
-                      }
-                    </td>
-                    {canEdit && (
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1.5">
-                          <button onClick={() => openEdit(r)}
-                            className="w-7 h-7 rounded-lg border border-[#1e2535] text-[#0095ff] hover:bg-[#0095ff]/10 hover:border-[#0095ff] transition-all flex items-center justify-center text-xs">✎</button>
-                          <button onClick={() => setDeleteRow(r)}
-                            className="w-7 h-7 rounded-lg border border-[#1e2535] text-[#ff4757] hover:bg-[#ff4757]/10 hover:border-[#ff4757] transition-all flex items-center justify-center text-xs">✕</button>
-                        </div>
+                <tr>
+                  <td colSpan={totalCols} className="py-16 text-center text-[#4a5568]">
+                    <div className="mb-2 text-3xl">🗃️</div>
+                    {tr.noData}
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((r, index) => {
+                  const p = r.products
+                  const available = r.on_hand - r.reserved
+                  const isLow = r.on_hand <= (p?.threshold || 0)
+                  const wh = WAREHOUSES.find(w => w.id === p?.warehouse_id)
+
+                  const cellBase = 'px-4 py-3 border-b border-r border-[#1e2535] align-middle'
+                  const lastCellBase = 'px-4 py-3 border-b border-[#1e2535] align-middle'
+
+                  return (
+                    <tr key={r.id} className="transition-all hover:bg-[#131720]">
+                      <td
+                        style={{
+                          width: colWidths.no,
+                          minWidth: colWidths.no,
+                          maxWidth: colWidths.no,
+                        }}
+                        className="border-b border-r border-[#1e2535] px-3 py-2 align-middle text-center text-[12px] font-mono text-[#8896ae]"
+                      >
+                        {index + 1}
                       </td>
-                    )}
-                  </tr>
-                )
-              })}
+
+                      <td
+                        style={{
+                          width: colWidths.image,
+                          minWidth: colWidths.image,
+                          maxWidth: colWidths.image,
+                        }}
+                        className="border-b border-r border-[#1e2535] px-3 py-2 align-middle"
+                      >
+                        {p?.image_url ? (
+                          <img
+                            src={p.image_url}
+                            alt={p.name}
+                            onClick={() => setZoomImg(p.image_url)}
+                            className="h-10 w-10 cursor-zoom-in rounded-lg border border-[#1e2535] object-cover transition-all hover:scale-110 hover:border-[#00d4aa]"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-[#1e2535] bg-[#131720] text-lg">
+                            📦
+                          </div>
+                        )}
+                      </td>
+
+                      <td
+                        style={{ width: colWidths.sku, minWidth: colWidths.sku, maxWidth: colWidths.sku }}
+                        className={`${cellBase} text-[11px] font-mono text-[#4a5568]`}
+                      >
+                        {p?.sku || '—'}
+                      </td>
+
+                      <td
+                        style={{ width: colWidths.name, minWidth: colWidths.name, maxWidth: colWidths.name }}
+                        className={`${cellBase} text-[13px] font-bold`}
+                      >
+                        {p?.name || '—'}
+                      </td>
+
+                      <td
+                        style={{ width: colWidths.size, minWidth: colWidths.size, maxWidth: colWidths.size }}
+                        className={`${cellBase} text-[11px] font-mono text-[#8896ae]`}
+                      >
+                        {formatAttrs(r.attrs)}
+                      </td>
+
+                      <td
+                        style={{ width: colWidths.batch, minWidth: colWidths.batch, maxWidth: colWidths.batch }}
+                        className={`${cellBase} text-[11px] font-mono text-[#4a5568]`}
+                      >
+                        {r.batch || '—'}
+                      </td>
+
+                      <td
+                        style={{
+                          width: colWidths.warehouse,
+                          minWidth: colWidths.warehouse,
+                          maxWidth: colWidths.warehouse,
+                        }}
+                        className={cellBase}
+                      >
+                        {wh ? (
+                          <span
+                            className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-bold"
+                            style={{
+                              background: `${wh.color}18`,
+                              color: wh.color,
+                              borderColor: `${wh.color}30`,
+                            }}
+                          >
+                            {wh.icon} {wh.name}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-[#4a5568]">—</span>
+                        )}
+                      </td>
+
+                      <td
+                        style={{
+                          width: colWidths.onHand,
+                          minWidth: colWidths.onHand,
+                          maxWidth: colWidths.onHand,
+                        }}
+                        className={`${cellBase} text-[13px] font-mono font-bold`}
+                      >
+                        {r.on_hand}
+                      </td>
+
+                      <td
+                        style={{
+                          width: colWidths.reserved,
+                          minWidth: colWidths.reserved,
+                          maxWidth: colWidths.reserved,
+                        }}
+                        className={`${cellBase} text-[13px] font-mono text-[#ffa502]`}
+                      >
+                        {r.reserved}
+                      </td>
+
+                      <td
+                        style={{
+                          width: colWidths.available,
+                          minWidth: colWidths.available,
+                          maxWidth: colWidths.available,
+                          color: available <= 0 ? '#ff4757' : '#00d4aa',
+                        }}
+                        className={`${cellBase} text-[13px] font-mono font-bold`}
+                      >
+                        {available}
+                      </td>
+
+                      <td
+                        style={{
+                          width: colWidths.solded,
+                          minWidth: colWidths.solded,
+                          maxWidth: colWidths.solded,
+                        }}
+                        className={`${cellBase} text-[13px] font-mono font-bold text-[#ff9f43]`}
+                      >
+                        {r.solded}
+                      </td>
+
+                      {role.canSeeCost && (
+                        <>
+                          <td
+                            style={{
+                              width: colWidths.cost,
+                              minWidth: colWidths.cost,
+                              maxWidth: colWidths.cost,
+                            }}
+                            className={`${cellBase} text-[12px] font-mono text-[#8896ae]`}
+                          >
+                            ${fmt(r.cost_price)}
+                          </td>
+                          <td
+                            style={{
+                              width: colWidths.sell,
+                              minWidth: colWidths.sell,
+                              maxWidth: colWidths.sell,
+                            }}
+                            className={`${cellBase} text-[12px] font-mono text-[#00d4aa]`}
+                          >
+                            ${fmt(r.sell_price)}
+                          </td>
+                        </>
+                      )}
+
+                      <td
+                        style={{
+                          width: colWidths.threshold,
+                          minWidth: colWidths.threshold,
+                          maxWidth: colWidths.threshold,
+                        }}
+                        className={`${cellBase} text-[12px] font-mono text-[#4a5568]`}
+                      >
+                        {p?.threshold ?? 0}
+                      </td>
+
+                      <td
+                        style={{
+                          width: colWidths.status,
+                          minWidth: colWidths.status,
+                          maxWidth: colWidths.status,
+                        }}
+                        className={canEdit ? cellBase : lastCellBase}
+                      >
+                        {r.on_hand === 0 ? (
+                          <span className="inline-flex rounded border border-[#ff4757]/20 bg-[#ff4757]/10 px-2 py-0.5 text-[11px] font-mono font-bold text-[#ff4757]">
+                            {tr.finished}
+                          </span>
+                        ) : isLow ? (
+                          <span className="inline-flex rounded border border-[#ffa502]/20 bg-[#ffa502]/10 px-2 py-0.5 text-[11px] font-mono font-bold text-[#ffa502]">
+                            {tr.low}
+                          </span>
+                        ) : (
+                          <span className="inline-flex rounded border border-[#00d4aa]/20 bg-[#00d4aa]/10 px-2 py-0.5 text-[11px] font-mono font-bold text-[#00d4aa]">
+                            {tr.normal}
+                          </span>
+                        )}
+                      </td>
+
+                      {canEdit && (
+                        <td
+                          style={{
+                            width: colWidths.actions,
+                            minWidth: colWidths.actions,
+                            maxWidth: colWidths.actions,
+                          }}
+                          className={lastCellBase}
+                        >
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={() => openEdit(r)}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#1e2535] text-xs text-[#0095ff] transition-all hover:border-[#0095ff] hover:bg-[#0095ff]/10"
+                              title="Tahrirlash"
+                            >
+                              ✎
+                            </button>
+                            <button
+                              onClick={() => setDeleteRow(r)}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#1e2535] text-xs text-[#ff4757] transition-all hover:border-[#ff4757] hover:bg-[#ff4757]/10"
+                              title="O'chirish"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  )
+                })
+              )}
             </tbody>
           </table>
         )}
@@ -280,89 +999,143 @@ export default function Stock({ user, lang }: Props) {
 
       {zoomImg && (
         <div
-          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center backdrop-blur-sm cursor-zoom-out"
+          className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/90 backdrop-blur-sm"
           onClick={() => setZoomImg(null)}
         >
-          <div className="relative max-w-[90vw] max-h-[90vh]">
+          <div className="relative max-h-[90vh] max-w-[90vw]">
             <img
               src={zoomImg}
               alt="zoom"
-              className="max-w-[85vw] max-h-[85vh] rounded-2xl object-contain shadow-[0_0_80px_rgba(0,212,170,0.2)] border border-[#1e2535]"
+              className="max-h-[85vh] max-w-[85vw] rounded-2xl border border-[#1e2535] object-contain shadow-[0_0_80px_rgba(0,212,170,0.2)]"
             />
             <button
               onClick={() => setZoomImg(null)}
-              className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-[#131720] border border-[#1e2535] text-[#8896ae] hover:text-white hover:border-[#ff4757] transition-all flex items-center justify-center text-sm"
-            >✕</button>
+              className="absolute -right-3 -top-3 flex h-8 w-8 items-center justify-center rounded-full border border-[#1e2535] bg-[#131720] text-sm text-[#8896ae] transition-all hover:border-[#ff4757] hover:text-white"
+            >
+              ✕
+            </button>
           </div>
         </div>
       )}
 
       {editRow && (
-        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl p-7 w-[460px] max-w-[95vw]">
-            <div className="text-[17px] font-black mb-1 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-[600px] max-w-[95vw] overflow-y-auto rounded-2xl border border-[#28324a] bg-[#0d1018] p-7">
+            <div className="mb-1 flex items-center justify-between text-[17px] font-black">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#0095ff]" />
+                <div className="h-2 w-2 rounded-full bg-[#0095ff]" />
                 Stock tahrirlash
               </div>
-              <button onClick={() => setEditRow(null)}
-                className="w-8 h-8 rounded-lg border border-[#1e2535] text-[#4a5568] hover:text-white hover:border-[#ff4757] transition-all flex items-center justify-center">✕</button>
+              <button
+                onClick={() => setEditRow(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#1e2535] text-[#4a5568] transition-all hover:border-[#ff4757] hover:text-white"
+              >
+                ✕
+              </button>
             </div>
-            <div className="text-[12px] text-[#4a5568] mb-5 font-mono">
-              {editRow.products?.sku} — {editRow.products?.name}
+
+            <div className="mb-5 text-[12px] font-mono text-[#4a5568]">
+              {editRow.products?.sku || '—'} — {editRow.products?.name || 'Unknown'}
             </div>
 
             {savedMsg && (
-              <div className="bg-[#00d4aa]/10 border border-[#00d4aa]/25 rounded-xl px-4 py-2.5 mb-4 text-[13px] text-[#00d4aa]">
+              <div className="mb-4 rounded-xl border border-[#00d4aa]/25 bg-[#00d4aa]/10 px-4 py-2.5 text-[13px] text-[#00d4aa]">
                 ✅ Saqlandi!
+              </div>
+            )}
+
+            {saveError && (
+              <div className="mb-4 rounded-xl border border-[#ff4757]/25 bg-[#ff4757]/10 px-4 py-2.5 text-[13px] text-[#ff4757]">
+                ⚠️ {saveError}
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">Qoldiq (on hand)</label>
-                <input type="number"
-                  className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
+                  Qoldiq (on hand)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
                   value={editForm.on_hand}
-                  onChange={e => setEditForm((f: any) => ({ ...f, on_hand: e.target.value }))} />
+                  onChange={e => handleEditFormChange('on_hand', e.target.value)}
+                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                />
               </div>
+
               <div>
-                <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">Rezerv</label>
-                <input type="number"
-                  className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
+                  Rezerv
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
                   value={editForm.reserved}
-                  onChange={e => setEditForm((f: any) => ({ ...f, reserved: e.target.value }))} />
+                  onChange={e => handleEditFormChange('reserved', e.target.value)}
+                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                />
               </div>
+
               <div>
-                <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">Tan narxi ($)</label>
-                <input type="number"
-                  className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
+                  Tan narxi ($)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={editForm.cost_price}
-                  onChange={e => setEditForm((f: any) => ({ ...f, cost_price: e.target.value }))} />
+                  onChange={e => handleEditFormChange('cost_price', e.target.value)}
+                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                />
               </div>
+
               <div>
-                <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">Sotuv narxi ($)</label>
-                <input type="number"
-                  className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
+                  Sotuv narxi ($)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
                   value={editForm.sell_price}
-                  onChange={e => setEditForm((f: any) => ({ ...f, sell_price: e.target.value }))} />
+                  onChange={e => handleEditFormChange('sell_price', e.target.value)}
+                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                />
               </div>
+
               <div className="col-span-2">
-                <label className="block text-[10px] font-mono text-[#4a5568] uppercase tracking-wider mb-1.5">Min zaxira (threshold)</label>
-                <input type="number"
-                  className="w-full bg-[#131720] border border-[#1e2535] rounded-xl px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
+                  Min zaxira (threshold)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
                   value={editForm.threshold}
-                  onChange={e => setEditForm((f: any) => ({ ...f, threshold: e.target.value }))} />
+                  onChange={e => handleEditFormChange('threshold', e.target.value)}
+                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
+                />
               </div>
             </div>
 
-            <div className="flex gap-2 justify-end mt-6 pt-5 border-t border-[#1e2535]">
-              <button onClick={() => setEditRow(null)}
-                className="px-5 py-2.5 rounded-xl border border-[#1e2535] text-[#8896ae] text-[13px] font-semibold hover:border-[#28324a] transition-all">
+            {editRow.products && renderWarehouseParams(editRow.products.warehouse_id, editForm.attrs)}
+
+            <div className="mt-6 flex justify-end gap-2 border-t border-[#1e2535] pt-5">
+              <button
+                onClick={() => setEditRow(null)}
+                className="rounded-xl border border-[#1e2535] px-5 py-2.5 text-[13px] font-semibold text-[#8896ae] transition-all hover:border-[#28324a]"
+              >
                 Yopish
               </button>
-              <button onClick={handleSave} disabled={saving}
-                className="px-5 py-2.5 bg-[#0095ff] text-white font-bold rounded-xl text-[13px] hover:bg-[#1aa3ff] transition-all disabled:opacity-50">
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="rounded-xl bg-[#0095ff] px-5 py-2.5 text-[13px] font-bold text-white transition-all hover:bg-[#1aa3ff] disabled:cursor-not-allowed disabled:opacity-50"
+              >
                 {saving ? 'Saqlanmoqda...' : '💾 Saqlash'}
               </button>
             </div>
@@ -371,20 +1144,41 @@ export default function Stock({ user, lang }: Props) {
       )}
 
       {deleteRow && (
-        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center backdrop-blur-sm">
-          <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl p-7 w-[420px] max-w-[95vw]">
-            <div className="text-[17px] font-black mb-4 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
+          <div className="w-[420px] max-w-[95vw] rounded-2xl border border-[#28324a] bg-[#0d1018] p-7">
+            <div className="mb-4 flex items-center justify-between text-[17px] font-black">
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#ff4757]" />
+                <div className="h-2 w-2 rounded-full bg-[#ff4757]" />
                 Stock yozuvini o'chirish
               </div>
-              <button onClick={() => setDeleteRow(null)} className="w-8 h-8 rounded-lg border border-[#1e2535] text-[#4a5568] hover:text-white hover:border-[#ff4757] transition-all flex items-center justify-center">✕</button>
+              <button
+                onClick={() => setDeleteRow(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#1e2535] text-[#4a5568] transition-all hover:border-[#ff4757] hover:text-white"
+              >
+                ✕
+              </button>
             </div>
-            <p className="text-[14px] text-[#8896ae] mb-1"><strong className="text-white">{deleteRow.products?.name}</strong> stock yozuvi o'chiriladi!</p>
+
+            <p className="mb-1 text-[14px] text-[#8896ae]">
+              <strong className="text-white">{deleteRow.products?.name || 'Unknown'}</strong> stock yozuvi
+              o'chiriladi!
+            </p>
             <p className="text-[12px] text-[#ff4757]">Bu amalni qaytarib bo'lmaydi.</p>
-            <div className="flex gap-2 justify-end mt-6 pt-5 border-t border-[#1e2535]">
-              <button onClick={() => setDeleteRow(null)} className="px-5 py-2.5 rounded-xl border border-[#1e2535] text-[#8896ae] text-[13px] font-semibold hover:border-[#28324a] transition-all">Bekor</button>
-              <button onClick={handleDelete} disabled={deleting} className="px-5 py-2.5 bg-[#ff4757]/20 border border-[#ff4757]/30 text-[#ff4757] font-bold rounded-xl text-[13px] hover:bg-[#ff4757]/30 transition-all disabled:opacity-50">{deleting ? "..." : "O'chirish"}</button>
+
+            <div className="mt-6 flex justify-end gap-2 border-t border-[#1e2535] pt-5">
+              <button
+                onClick={() => setDeleteRow(null)}
+                className="rounded-xl border border-[#1e2535] px-5 py-2.5 text-[13px] font-semibold text-[#8896ae] transition-all hover:border-[#28324a]"
+              >
+                Bekor
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="rounded-xl border border-[#ff4757]/30 bg-[#ff4757]/20 px-5 py-2.5 text-[13px] font-bold text-[#ff4757] transition-all hover:bg-[#ff4757]/30 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleting ? "O'chirilmoqda..." : "O'chirish"}
+              </button>
             </div>
           </div>
         </div>
