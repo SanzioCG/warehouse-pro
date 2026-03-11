@@ -121,7 +121,7 @@ export default function Issuance({ user, lang }: Props) {
     note: '',
   })
 
-  const canDelete = ['leader', 'manager_saidaziz', 'manager_eldor'].includes(user.role)
+  //const canDelete = ['leader', 'manager_saidaziz', 'manager_eldor'].includes(user.role)
 
   useEffect(() => {
     fetchData()
