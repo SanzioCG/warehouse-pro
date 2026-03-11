@@ -62,6 +62,11 @@ function normalizeTransactionRows(value: unknown): TransactionRow[] {
     .filter((row): row is TransactionRow => row !== null)
 }
 
+function isOutboundTransaction(type: string): boolean {
+  const normalized = type.trim().toLowerCase()
+  return normalized === 'issuance' || normalized === 'out' || normalized === 'sale' || normalized === 'sold'
+}
+
 export default function Transactions({ user, lang }: Props) {
   const tr = t(lang)
   const role = ROLES[user.role]
@@ -108,16 +113,20 @@ export default function Transactions({ user, lang }: Props) {
 
   const handleDeleteTransaction = useCallback(
     async (row: TransactionRow) => {
-      const confirmed = window.confirm("Haqiqatan ham bu chiqimni o‘chirmoqchimisiz?")
+      if (!canDelete) {
+        alert("Sizda bu amal uchun ruxsat yo'q")
+        return
+      }
+
+      const confirmed = window.confirm("Haqiqatan ham bu transactionni o‘chirmoqchimisiz?")
       if (!confirmed) return
 
       setDeletingId(row.id)
 
       try {
-        const isOutTransaction = row.type === 'out' || row.type === 'sale'
+        const outbound = isOutboundTransaction(row.type)
 
-        // 1) Agar bu chiqim bo‘lsa, stockga qty ni qaytaramiz
-        if (isOutTransaction) {
+        if (outbound) {
           if (!row.stock_id) {
             throw new Error("transactions jadvalida stock_id yo'q. Chiqimni stockga qaytarish uchun stock_id kerak.")
           }
@@ -141,7 +150,6 @@ export default function Transactions({ user, lang }: Props) {
           if (stockUpdateError) throw stockUpdateError
         }
 
-        // 2) Transactionni delete qilamiz
         const { error: deleteError } = await supabase
           .from('transactions')
           .delete()
@@ -149,7 +157,6 @@ export default function Transactions({ user, lang }: Props) {
 
         if (deleteError) throw deleteError
 
-        // 3) Audit log
         const { error: auditError } = await supabase
           .from('audit_logs')
           .insert([
@@ -165,7 +172,6 @@ export default function Transactions({ user, lang }: Props) {
 
         if (auditError) throw auditError
 
-        // 4) local state update
         setRows(prev => prev.filter(item => item.id !== row.id))
       } catch (error) {
         console.error("Transaction o'chirishda xatolik:", error)
@@ -174,7 +180,7 @@ export default function Transactions({ user, lang }: Props) {
         setDeletingId(null)
       }
     },
-    [user.name, user.role]
+    [canDelete, user.name, user.role]
   )
 
   return (
