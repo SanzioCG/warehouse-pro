@@ -187,22 +187,22 @@ export default function Dashboard({ user, lang }: Props) {
   const i = {
     omborlar:       lang === 'ru' ? 'Склады' : 'Omborlar',
     jamiAktivlar:   lang === 'ru' ? 'Общие активы' : 'Jami aktivlar',
-    foyda:          lang === 'ru' ? 'Прибыль' : 'Foyda',
-    zarar:          lang === 'ru' ? 'Убыток' : 'Zarar',
-    kamZaxira:      lang === 'ru' ? 'Мало остатков' : 'Kam zaxira',
-    mahsulot:       lang === 'ru' ? 'товаров' : 'mahsulot',
-    jamiQiymat:     lang === 'ru' ? 'Общая стоимость' : 'Jami qiymat',
-    kutFoyda:       lang === 'ru' ? 'Ожидаемая прибыль' : 'Kutilayotgan foyda',
-    tekinZarar:     lang === 'ru' ? 'Убыток от бесплатных' : 'Tekin zarar',
-    aktivQiymati:   lang === 'ru' ? '$ Стоимость активов' : '$ Aktiv qiymati',
-    sofRent:        lang === 'ru' ? '💹 Чистая рентабельность' : '💹 Sof rentabellik',
-    molHisobot:     lang === 'ru' ? 'Финансовый отчёт' : 'Moliyaviy hisobot',
-    partiya:        lang === 'ru' ? 'Партия:' : 'Partiya:',
-    barchasi:       lang === 'ru' ? 'Все' : 'Barchasi',
-    hisob:          lang === 'ru' ? 'Расчёты на основе остатков и цен' : 'Hisob-kitoblar jami qoldiq va narxga asoslangan',
-    taWarning:      lang === 'ru' ? '⚠️ Убыток от бесплатных' : '⚠️ Tekin zarar',
-    operYoq:        lang === 'ru' ? 'Операций нет' : "Operatsiyalar yo'q",
-    zaxira:         lang === 'ru' ? 'Запас' : 'Zaxira',
+    foyda:           lang === 'ru' ? 'Прибыль' : 'Foyda',
+    zarar:           lang === 'ru' ? 'Убыток' : 'Zarar',
+    kamZaxira:       lang === 'ru' ? 'Мало остатков' : 'Kam zaxira',
+    mahsulot:        lang === 'ru' ? 'товаров' : 'mahsulot',
+    jamiQiymat:      lang === 'ru' ? 'Общая стоимость' : 'Jami qiymat',
+    kutFoyda:        lang === 'ru' ? 'Ожидаемая прибыль' : 'Kutilayotgan foyda',
+    tekinZarar:      lang === 'ru' ? 'Убыток от бесплатных' : 'Tekin zarar',
+    aktivQiymati:    lang === 'ru' ? '$ Стоимость активов' : '$ Aktiv qiymati',
+    sofRent:         lang === 'ru' ? '💹 Чистая рентабельность' : '💹 Sof rentabellik',
+    molHisobot:      lang === 'ru' ? 'Финансовый отчёт' : 'Moliyaviy hisobot',
+    partiya:         lang === 'ru' ? 'Партия:' : 'Partiya:',
+    barchasi:        lang === 'ru' ? 'Все' : 'Barchasi',
+    hisob:           lang === 'ru' ? 'Расчёты на основе остатков и цен' : 'Hisob-kitoblar jami qoldiq va narxga asoslangan',
+    taWarning:       lang === 'ru' ? '⚠️ Убыток от бесплатных' : '⚠️ Tekin zarar',
+    operYoq:         lang === 'ru' ? 'Операций нет' : "Operatsiyalar yo'q",
+    zaxira:          lang === 'ru' ? 'Запас' : 'Zaxira',
   }
 
   if (loading) return (
@@ -215,9 +215,9 @@ export default function Dashboard({ user, lang }: Props) {
   )
 
   return (
-    <div>
+    <div className="pt-14 lg:pt-0"> {/* Mobil menyu tugmasi uchun joy ajratamiz */}
       {role.canSeeCost && (
-        <div className="grid grid-cols-3 gap-3 mb-5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
           {[
             {
               label: i.jamiQiymat,
@@ -239,26 +239,26 @@ export default function Dashboard({ user, lang }: Props) {
           ].map((c, idx) => (
             <div key={idx} className="bg-[#0d1018] border border-[#171c27] rounded-xl p-4 relative overflow-hidden">
               <div className="absolute top-0 left-0 right-0 h-0.5" style={{ background: c.accent }} />
-              <div className="text-[14px] font-mono text-[#ddeaff] uppercase tracking-widest mb-2">{c.label}</div>
-              <div className="text-xl font-black font-mono" style={{ color: c.accent }}>{c.value}</div>
+              <div className="text-[12px] md:text-[14px] font-mono text-[#ddeaff] uppercase tracking-widest mb-2">{c.label}</div>
+              <div className="text-lg md:text-xl font-black font-mono" style={{ color: c.accent }}>{c.value}</div>
             </div>
           ))}
         </div>
       )}
 
-      <div className="mb-8 text-[16px] font-black flex items-center gap-5">
+      <div className="mb-6 text-[16px] font-black flex items-center gap-4">
         <div className="w-1 h-5 rounded bg-[#00d4aa]" />
         {i.omborlar}
       </div>
 
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         {WAREHOUSES.filter(w => role.warehouses.includes(w.id)).map(wh => {
           const s = getWhStats(wh.id)
           return (
             <button
               key={wh.id}
               onClick={() => { setSelectedWh(wh.id); setBatchFilter('all') }}
-              className="bg-[#0d1018] border border-[#1e2535] rounded-xl p-4 hover:border-[#28324a] hover:-translate-y-0.5 transition-all text-left w-full group"
+              className="bg-[#0d1018] border border-[#1e2535] rounded-xl p-4 hover:border-[#28324a] transition-all text-left w-full group"
             >
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
@@ -268,46 +268,37 @@ export default function Dashboard({ user, lang }: Props) {
                   >
                     {wh.icon}
                   </div>
-                  <div>
-                    <div className="font-black text-[14px] leading-tight">{wh.name}</div>
-                    <div className="text-[12px] font-mono mt-0.8" style={{ color: wh.color }}>
+                  <div className="min-w-0">
+                    <div className="font-black text-[14px] leading-tight truncate">{wh.name}</div>
+                    <div className="text-[11px] font-mono mt-0.5" style={{ color: wh.color }}>
                       {s.totalProducts} {i.mahsulot}
                     </div>
                   </div>
                 </div>
-                <span className="text-[#4a5568] group-hover:text-[#00d4aa] transition-all text-lg">↗</span>
+                <span className="text-[#4a5568] group-hover:text-[#00d4aa] text-lg">↗</span>
               </div>
 
               {role.canSeeCost ? (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <div className="flex justify-between items-center">
-                    <span className="text-[14px] text-[#c7ccd4]">{i.jamiAktivlar}</span>
-                    <span className="font-mono font-bold text-[14px] text-[#00d4aa]">{fmt(s.value)}</span>
+                    <span className="text-[13px] text-[#c7ccd4]">{i.jamiAktivlar}</span>
+                    <span className="font-mono font-bold text-[13px] text-[#00d4aa]">{fmt(s.value)}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-[14px] text-[#c7ccd4]">{i.foyda}</span>
-                    <span className="font-mono font-bold text-[14px] text-[#a55eea]">{fmt(s.profit)}</span>
+                    <span className="text-[13px] text-[#c7ccd4]">{i.foyda}</span>
+                    <span className="font-mono font-bold text-[13px] text-[#a55eea]">{fmt(s.profit)}</span>
                   </div>
-                  {s.loss > 0 && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-[14px] text-[#c7ccd4]">{i.zarar}</span>
-                      <span className="font-mono font-bold text-[14px] text-[#ff4757]">−{fmt(s.loss)}</span>
-                    </div>
-                  )}
                   {s.lowCount > 0 && (
-                    <div className="flex justify-between items-center pt-1 border-t border-[#1e2535]">
-                      <span className="text-[14px] text-[#ff4757]">{i.kamZaxira}</span>
-                      <span className="font-mono font-bold text-[14px] text-[#ff4757]">{s.lowCount} {lang === 'ru' ? 'шт' : 'ta'}</span>
+                    <div className="flex justify-between items-center pt-1 border-t border-[#1e2535] mt-1">
+                      <span className="text-[12px] text-[#ff4757]">{i.kamZaxira}</span>
+                      <span className="font-mono font-bold text-[12px] text-[#ff4757]">{s.lowCount}</span>
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="flex justify-between items-center">
                   <span className="text-[10px] text-[#4a5568]">{i.zaxira}</span>
-                  <span
-                    className="font-mono font-bold text-[12px]"
-                    style={{ color: wh.color }}
-                  >
+                  <span className="font-mono font-bold text-[12px]" style={{ color: wh.color }}>
                     {stock.filter((st: any) => st.products?.warehouse_id === wh.id)
                       .reduce((a: number, st: any) => a + (st.on_hand || 0), 0)}
                   </span>
@@ -318,70 +309,74 @@ export default function Dashboard({ user, lang }: Props) {
         })}
       </div>
 
+      {/* So'nggi operatsiyalar - Mobil uchun scrollable qilingan */}
       <div className="bg-[#0d1018] border border-[#1e2535] rounded-2xl overflow-hidden">
         <div className="px-5 py-3 border-b border-[#1e2535] bg-[#131720] flex items-center gap-2">
           <div className="w-0.5 h-4 rounded bg-[#00d4aa]" />
           <span className="font-bold text-[14px]">{tr.recentOps}</span>
         </div>
 
-        <table className="w-full border-collapse">
-          <thead>
-            <tr>
-              {[tr.date, tr.type, tr.warehouse, tr.product, tr.qty, tr.user].map(h => (
-                <th key={h} className="px-4 py-2.5 text-left text-[10px] font-mono text-[#4a5568] uppercase tracking-wider bg-[#0d1018] border-b border-[#1e2535]">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {recentTx.length === 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse min-w-[600px]">
+            <thead>
               <tr>
-                <td colSpan={6} className="text-center py-12 text-[#4a5568]">
-                  <div className="text-3xl mb-2">📋</div>
-                  {i.operYoq}
-                </td>
+                {[tr.date, tr.type, tr.warehouse, tr.product, tr.qty, tr.user].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-[10px] font-mono text-[#4a5568] uppercase tracking-wider bg-[#0d1018] border-b border-[#1e2535]">
+                    {h}
+                  </th>
+                ))}
               </tr>
-            ) : recentTx.map((tx: any) => {
-              const wh = WAREHOUSES.find(w => w.id === tx.warehouse_id)
-              return (
-                <tr key={tx.id} className="border-b border-[#1e2535] hover:bg-[#131720] transition-all">
-                  <td className="px-4 py-3 text-[11px] font-mono text-[#4a5568]">
-                    {new Date(tx.created_at).toLocaleDateString()}
+            </thead>
+            <tbody>
+              {recentTx.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-12 text-[#4a5568]">
+                    <div className="text-3xl mb-2">📋</div>
+                    {i.operYoq}
                   </td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-bold font-mono border ${
-                      tx.type === 'receiving'
-                        ? 'bg-[#00d4aa]/10 text-[#00d4aa] border-[#00d4aa]/20'
-                        : 'bg-[#ffa502]/10 text-[#ffa502] border-[#ffa502]/20'
-                    }`}>
-                      {tx.type === 'receiving' ? '📥 ' + tr.receiving : '📤 ' + tr.issuance}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-[12px]" style={{ color: wh?.color }}>
-                    {wh?.icon} {wh?.name}
-                  </td>
-                  <td className="px-4 py-3 font-bold text-[13px]">{tx.products?.name}</td>
-                  <td className="px-4 py-3 font-mono text-[13px]">{tx.qty} {tx.products?.unit}</td>
-                  <td className="px-4 py-3 text-[12px] text-[#4a5568]">{tx.user_role}</td>
                 </tr>
-              )
-            })}
-          </tbody>
-        </table>
+              ) : recentTx.map((tx: any) => {
+                const wh = WAREHOUSES.find(w => w.id === tx.warehouse_id)
+                return (
+                  <tr key={tx.id} className="border-b border-[#1e2535] hover:bg-[#131720] transition-all">
+                    <td className="px-4 py-3 text-[11px] font-mono text-[#4a5568]">
+                      {new Date(tx.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold font-mono border ${
+                        tx.type === 'receiving'
+                          ? 'bg-[#00d4aa]/10 text-[#00d4aa] border-[#00d4aa]/20'
+                          : 'bg-[#ffa502]/10 text-[#ffa502] border-[#ffa502]/20'
+                      }`}>
+                        {tx.type === 'receiving' ? '📥' : '📤'} {tx.type === 'receiving' ? tr.receiving : tr.issuance}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-[12px]" style={{ color: wh?.color }}>
+                      <span className="truncate block max-w-[100px]">{wh?.name}</span>
+                    </td>
+                    <td className="px-4 py-3 font-bold text-[13px]">{tx.products?.name}</td>
+                    <td className="px-4 py-3 font-mono text-[13px]">{tx.qty} {tx.products?.unit}</td>
+                    <td className="px-4 py-3 text-[12px] text-[#4a5568]">{tx.user_role}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
+      {/* Modal - Mobil ekranlarda 100% enni egallashi uchun */}
       {selectedWh && (() => {
         const wh = WAREHOUSES.find(w => w.id === selectedWh)!
         const d = getModalData(selectedWh)
 
         return (
           <div
-            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center backdrop-blur-sm"
+            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center backdrop-blur-sm p-4"
             onClick={e => e.target === e.currentTarget && setSelectedWh(null)}
           >
-            <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl w-[520px] max-w-[95vw] overflow-hidden">
-              <div className="px-6 pt-6 pb-4 border-b border-[#1e2535]">
+            <div className="bg-[#0d1018] border border-[#28324a] rounded-2xl w-full max-w-[520px] max-h-[90vh] overflow-y-auto">
+              <div className="sticky top-0 bg-[#0d1018] z-10 px-6 pt-6 pb-4 border-b border-[#1e2535]">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div
@@ -390,14 +385,14 @@ export default function Dashboard({ user, lang }: Props) {
                     >
                       {wh.icon}
                     </div>
-                    <div>
-                      <div className="font-black text-[16px] uppercase tracking-wide">{wh.name}</div>
-                      <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mt-0.5">{i.molHisobot}</div>
+                    <div className="min-w-0">
+                      <div className="font-black text-[15px] uppercase tracking-wide truncate">{wh.name}</div>
+                      <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">{i.molHisobot}</div>
                     </div>
                   </div>
                   <button
                     onClick={() => setSelectedWh(null)}
-                    className="w-8 h-8 rounded-lg border border-[#1e2535] text-[#4a5568] hover:text-white hover:border-[#ff4757] transition-all flex items-center justify-center"
+                    className="w-8 h-8 rounded-lg border border-[#1e2535] text-white hover:border-[#ff4757] transition-all flex items-center justify-center"
                   >
                     ✕
                   </button>
@@ -406,65 +401,63 @@ export default function Dashboard({ user, lang }: Props) {
 
               <div className="p-6">
                 <div className="flex items-center gap-2 mb-5">
-                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">
-                    {i.partiya}
-                  </span>
-
+                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">{i.partiya}</span>
                   <select
                     value={batchFilter}
                     onChange={(e) => setBatchFilter(e.target.value)}
-                    className="bg-[#00d4aa] text-black rounded px-3 py-1 text-[11px] font-mono"
+                    className="bg-[#00d4aa] text-black rounded px-3 py-1 text-[11px] font-bold"
                   >
                     <option value="all">{i.barchasi}</option>
                     {d.batches.map((b: string) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
+                      <option key={b} value={b}>{b}</option>
                     ))}
                   </select>
                 </div>
 
-                <div className="border-t border-[#1e2535] mb-5" />
-
-                <div className="grid grid-cols-2 gap-4 mb-5">
-                  <div>
-                    <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">{i.jamiAktivlar}</div>
-                    <div className="text-4xl font-black text-white">{fmt(d.filteredValue)}</div>
-                    <div className="text-[10px] font-mono text-[#00d4aa] mt-1">{i.aktivQiymati}</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+                  <div className="p-3 bg-[#131720] rounded-xl border border-[#1e2535]">
+                    <div className="text-[10px] font-mono text-[#4a5568] uppercase mb-1">{i.jamiAktivlar}</div>
+                    <div className="text-2xl font-black text-white">{fmt(d.filteredValue)}</div>
                   </div>
-                  <div>
-                    <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">{i.kutFoyda}</div>
-                    <div className="text-4xl font-black text-[#00d4aa]">{fmt(d.filteredProfit)}</div>
-                    <div className="text-[10px] font-mono text-[#00d4aa] mt-1">{i.sofRent}</div>
+                  <div className="p-3 bg-[#131720] rounded-xl border border-[#1e2535]">
+                    <div className="text-[10px] font-mono text-[#4a5568] uppercase mb-1">{i.kutFoyda}</div>
+                    <div className="text-2xl font-black text-[#00d4aa]">{fmt(d.filteredProfit)}</div>
                   </div>
                 </div>
 
                 {d.filteredLoss > 0 && (
                   <div className="bg-[#ff4757]/8 border border-[#ff4757]/20 rounded-xl px-4 py-3 mb-4 flex items-center justify-between">
-                    <span className="text-[12px] text-[#ff4757]">{i.taWarning}</span>
+                    <span className="text-[12px] text-[#ff4757] font-semibold">{i.taWarning}</span>
                     <span className="font-mono font-black text-[#ff4757]">−{fmt(d.filteredLoss)}</span>
                   </div>
                 )}
 
-                {d.filtered.length > 1 && (
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                    {d.filtered.map(([batch, val]: any) => (
-                      <div key={batch} className="flex items-center justify-between bg-[#131720] border border-[#1e2535] rounded-xl px-4 py-2.5">
-                        <span className="font-mono text-[11px] text-[#8896ae]">📦 {batch}</span>
-                        <div className="flex gap-3">
-                          <span className="font-mono text-[11px] text-[#00d4aa]">{fmt(val.value)}</span>
-                          <span className="font-mono text-[11px] text-[#a55eea]">+{fmt(val.profit)}</span>
-                          {val.loss > 0 && (
-                            <span className="font-mono text-[11px] text-[#ff4757]">−{fmt(val.loss)}</span>
-                          )}
+                <div className="space-y-2">
+                  {d.filtered.map(([batch, val]: any) => (
+                    <div key={batch} className="flex flex-col sm:flex-row sm:items-center justify-between bg-[#131720] border border-[#1e2535] rounded-xl px-4 py-3 gap-2">
+                      <span className="font-mono text-[11px] text-[#8896ae]">📦 {batch}</span>
+                      <div className="flex gap-4">
+                        <div className="text-center">
+                          <div className="text-[9px] text-gray-500 uppercase">Val</div>
+                          <div className="font-mono text-[11px] text-[#00d4aa] font-bold">{fmt(val.value)}</div>
                         </div>
+                        <div className="text-center">
+                          <div className="text-[9px] text-gray-500 uppercase">Prof</div>
+                          <div className="font-mono text-[11px] text-[#a55eea] font-bold">+{fmt(val.profit)}</div>
+                        </div>
+                        {val.loss > 0 && (
+                          <div className="text-center">
+                            <div className="text-[9px] text-gray-500 uppercase">Loss</div>
+                            <div className="font-mono text-[11px] text-[#ff4757] font-bold">−{fmt(val.loss)}</div>
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    </div>
+                  ))}
+                </div>
 
-                <div className="border-t border-[#1e2535] mt-5 pt-3 text-center">
-                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">{i.hisob}</span>
+                <div className="border-t border-[#1e2535] mt-6 pt-4 text-center">
+                  <span className="text-[10px] font-mono text-[#4a5568] leading-relaxed uppercase tracking-widest">{i.hisob}</span>
                 </div>
               </div>
             </div>
