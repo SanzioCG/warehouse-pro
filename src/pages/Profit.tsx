@@ -62,31 +62,40 @@ export default function Profit({ user, lang }: Props) {
 
   const totalProfit = totalRevenue - totalCost
 
-  const fmt = (n: number) => n.toLocaleString('uz-UZ')
+  // Dollar formatlash funksiyasi
+  const fmt = (n: number) => 
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+    }).format(n)
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-4">
+        {/* Jami Foyda Kartasi */}
         <div className="bg-[#0d1018] border border-[#1e2535] rounded-2xl p-5 relative overflow-hidden">
           <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#00d4aa]" />
           <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">
             {tr.totalProfit}
           </div>
-          <div className="text-xl font-black text-[#00d4aa]">
-            {fmt(totalProfit)} {tr.som}
+          <div className={`text-xl font-black ${totalProfit >= 0 ? 'text-[#00d4aa]' : 'text-red-500'}`}>
+            {fmt(totalProfit)}
           </div>
         </div>
 
+        {/* Jami Daromad Kartasi */}
         <div className="bg-[#0d1018] border border-[#1e2535] rounded-2xl p-5 relative overflow-hidden">
           <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#0095ff]" />
           <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">
             {tr.totalRevenue}
           </div>
           <div className="text-xl font-black text-[#0095ff]">
-            {fmt(totalRevenue)} {tr.som}
+            {fmt(totalRevenue)}
           </div>
         </div>
 
+        {/* Sotuvlar soni */}
         <div className="bg-[#0d1018] border border-[#1e2535] rounded-2xl p-5 relative overflow-hidden">
           <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#ffa502]" />
           <div className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-2">
@@ -159,7 +168,7 @@ export default function Profit({ user, lang }: Props) {
                     <td className="px-4 py-3 font-mono text-[12px]">
                       {fmt(costPrice)}
                     </td>
-                    <td className="px-4 py-3 font-mono font-bold text-[#00d4aa]">
+                    <td className={`px-4 py-3 font-mono font-bold ${profit >= 0 ? 'text-[#00d4aa]' : 'text-red-500'}`}>
                       {fmt(profit)}
                     </td>
                   </tr>

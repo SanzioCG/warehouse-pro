@@ -99,6 +99,15 @@ warehouse: 'Ombor',
 product: 'Mahsulot',
 qty: 'Miqdor',
 user: 'Foydalanuvchi',
+
+noClient: "Mijozsiz",
+totalQty: "Umumiy miqdor",
+history: "Tarix",
+issuanceByClient: "Mijozlar bo'yicha chiqimlar",
+lastAction: "Oxirgi harakat",
+itemsCount: "turdagi mahsulot",
+details: "Tafsilotlar",
+pcs: "dona"
 }
 
 export type Translations = typeof uz

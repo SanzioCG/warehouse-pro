@@ -1,1070 +1,284 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { printReceipt } from '../lib/pdf'
-import type { User, Language } from '../types'
+import type { User, Language, Transaction, Product, Client } from '../types'
 import { ROLES, WAREHOUSES } from '../config/roles'
 import { t } from '../i18n'
 
-interface Props {
-  user: User
-  lang: Language
-}
-
-interface Transaction {
-  id: string
-  type: string
-  warehouse_id: string
-  product_id: string
-  stock_id: string | null
-  qty: number
-  sell_price: number
-  cost_price: number
-  sale_type: 'paid' | 'debt' | 'free'
-  client_id: string | null
-  batch: string | null
-  note: string | null
-  created_at: string
-  products: {
-    name: string
-    unit: string
-  } | null
-  clients: {
-    name: string
-  } | null
-}
-
-interface Product {
-  id: string
-  name: string
-  unit: string
-  warehouse_id: string
-  cost_price: number
-  sku?: string | null
-}
-
-interface Client {
-  id: string
-  name: string
-  phone?: string
-}
-
 interface Stock {
-  id: string
-  product_id: string
-  on_hand: number
-  reserved: number
-  batch: string | null
-  attrs: Record<string, string> | null
-  cost_price: number
-  sell_price: number | null
-  products?: {
-    warehouse_id: string
-  }
+  id: string; product_id: string; on_hand: number; reserved: number;
+  batch: string | null; sell_price: number | null; cost_price: number;
+  attrs: Record<string, any> | null; products?: { warehouse_id: string };
 }
 
-interface FormData {
-  warehouse_id: string
-  product_id: string
-  stock_id: string
-  qty: number | ''
-  sell_price: number | ''
-  sale_type: 'paid' | 'debt' | 'free'
-  client_id: string
-  due_date: string
-  note: string
+interface CartItem {
+  tempId: string; warehouse_id: string; warehouse_name: string;
+  product_id: string; product_name: string; unit: string;
+  stock_id: string; batch: string | null; qty: number;
+  sell_price: number; cost_price: number; variant_label: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function toAttrs(value: unknown): Record<string, string> | null {
-  if (!isRecord(value)) return null
-
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(value)) {
-    if (v == null) continue
-    out[k] = String(v)
-  }
-  return out
-}
-
-export default function Issuance({ user, lang }: Props) {
+export default function Issuance({ user, lang }: { user: User, lang: Language }) {
   const tr = t(lang)
   const role = ROLES[user.role]
 
-  const [txs, setTxs] = useState<Transaction[]>([])
+  const [txs, setTxs] = useState<any[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [clients, setClients] = useState<Client[]>([])
   const [stockRows, setStockRows] = useState<Stock[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
 
   const [modal, setModal] = useState(false)
+  const [viewingGroup, setViewingGroup] = useState<any | null>(null)
+
+  const [cart, setCart] = useState<CartItem[]>([])
   const [saving, setSaving] = useState(false)
-  const [submitError, setSubmitError] = useState<string | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [selectedClientId, setSelectedClientId] = useState('')
+  const [saleType, setSaleType] = useState<'paid' | 'debt' | 'free'>('paid')
+  const [dueDate, setDueDate] = useState('')
+  const [note, setNote] = useState('')
 
-  const [productDropdownOpen, setProductDropdownOpen] = useState(false)
-  const [productSearch, setProductSearch] = useState('')
-  const productDropdownRef = useRef<HTMLDivElement | null>(null)
+  const [activeWhId, setActiveWhId] = useState(role.warehouses[0] || '')
+  const [activeProdId, setActiveProdId] = useState('')
+  const [activeStockId, setActiveStockId] = useState('')
+  const [activeQty, setActiveQty] = useState<number | ''>('')
+  const [activePrice, setActivePrice] = useState<number | ''>('')
+  const [prodSearch, setProdSearch] = useState('')
+  const [prodDropOpen, setProdDropOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const [form, setForm] = useState<FormData>({
-    warehouse_id: role.warehouses[0] || '',
-    product_id: '',
-    stock_id: '',
-    qty: '',
-    sell_price: '',
-    sale_type: 'paid',
-    client_id: '',
-    due_date: '',
-    note: '',
-  })
+  const fmt = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
 
-  //const canDelete = ['leader', 'manager_saidaziz', 'manager_eldor'].includes(user.role)
-
-  useEffect(() => {
-    fetchData()
-  }, [user.role])
-
-  useEffect(() => {
-    function handleOutsideClick(e: MouseEvent) {
-      if (!productDropdownRef.current) return
-      if (!productDropdownRef.current.contains(e.target as Node)) {
-        setProductDropdownOpen(false)
-      }
-    }
-
-    if (productDropdownOpen) {
-      document.addEventListener('mousedown', handleOutsideClick)
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick)
-    }
-  }, [productDropdownOpen])
+  useEffect(() => { fetchData() }, [])
 
   async function fetchData() {
     setLoading(true)
-    setError(null)
-
     try {
-      const [
-        { data: txData, error: txError },
-        { data: prodData, error: prodError },
-        { data: clientData, error: clientError },
-        { data: stockData, error: stockError },
-      ] = await Promise.all([
-        supabase
-          .from('transactions')
-          .select('*, products(name, unit), clients(name)')
-          .eq('type', 'issuance')
-          .in('warehouse_id', role.warehouses)
-          .order('created_at', { ascending: false }),
-
-        supabase
-          .from('products')
-          .select('id, name, unit, warehouse_id, cost_price, sku')
-          .in('warehouse_id', role.warehouses),
-
-        supabase
-          .from('clients')
-          .select('id, name')
-          .order('name'),
-
-        supabase
-          .from('stock')
-          .select('id, product_id, on_hand, reserved, batch, attrs, cost_price, sell_price, products!inner(warehouse_id)'),
+      const [tReq, pReq, cReq, sReq] = await Promise.all([
+        supabase.from('transactions').select('*, products(name, unit), clients(name, id)').eq('type', 'issuance').in('warehouse_id', role.warehouses).order('created_at', { ascending: false }),
+        supabase.from('products').select('*').in('warehouse_id', role.warehouses),
+        supabase.from('clients').select('*').order('name'),
+        supabase.from('stock').select('*, products!inner(warehouse_id)')
       ])
-
-      if (txError) throw txError
-      if (prodError) throw prodError
-      if (clientError) throw clientError
-      if (stockError) throw stockError
-
-      const normalizedTxs: Transaction[] = Array.isArray(txData)
-        ? txData.map((tx: any) => ({
-            id: String(tx.id),
-            type: String(tx.type ?? ''),
-            warehouse_id: String(tx.warehouse_id ?? ''),
-            product_id: String(tx.product_id ?? ''),
-            stock_id: tx.stock_id ? String(tx.stock_id) : null,
-            qty: Number(tx.qty ?? 0),
-            sell_price: Number(tx.sell_price ?? 0),
-            cost_price: Number(tx.cost_price ?? 0),
-            sale_type: (tx.sale_type ?? 'paid') as 'paid' | 'debt' | 'free',
-            client_id: tx.client_id ? String(tx.client_id) : null,
-            batch: tx.batch ? String(tx.batch) : null,
-            note: tx.note ? String(tx.note) : null,
-            created_at: String(tx.created_at ?? ''),
-            products: tx.products
-              ? {
-                  name: String(tx.products.name ?? ''),
-                  unit: String(tx.products.unit ?? ''),
-                }
-              : null,
-            clients: tx.clients
-              ? {
-                  name: String(tx.clients.name ?? ''),
-                }
-              : null,
-          }))
-        : []
-
-      const normalizedProducts: Product[] = Array.isArray(prodData)
-        ? prodData.map((p: any) => ({
-            id: String(p.id),
-            name: String(p.name ?? ''),
-            unit: String(p.unit ?? ''),
-            warehouse_id: String(p.warehouse_id ?? ''),
-            cost_price: Number(p.cost_price ?? 0),
-            sku: p.sku ? String(p.sku) : null,
-          }))
-        : []
-
-      const normalizedClients: Client[] = Array.isArray(clientData)
-        ? clientData.map((c: any) => ({
-            id: String(c.id),
-            name: String(c.name ?? ''),
-            phone: c.phone ? String(c.phone) : undefined,
-          }))
-        : []
-
-      const normalizedStock: Stock[] = Array.isArray(stockData)
-        ? stockData.map((s: any) => ({
-            id: String(s.id),
-            product_id: String(s.product_id ?? ''),
-            on_hand: Number(s.on_hand ?? 0),
-            reserved: Number(s.reserved ?? 0),
-            batch: s.batch ? String(s.batch) : null,
-            attrs: toAttrs(s.attrs),
-            cost_price: Number(s.cost_price ?? 0),
-            sell_price: s.sell_price != null ? Number(s.sell_price) : null,
-            products: {
-              warehouse_id: String(s.products?.warehouse_id ?? ''),
-            },
-          }))
-        : []
-
-      setTxs(normalizedTxs)
-      setProducts(normalizedProducts)
-      setClients(normalizedClients)
-      setStockRows(normalizedStock)
-    } catch (err) {
-      console.error("Ma'lumotlarni yuklashda xatolik:", err)
-      setError("Ma'lumotlarni yuklashda xatolik yuz berdi")
-    } finally {
-      setLoading(false)
-    }
+      setTxs(tReq.data || [])
+      setProducts(pReq.data || [])
+      setClients(cReq.data || [])
+      setStockRows(sReq.data || [])
+    } finally { setLoading(false) }
   }
 
-  const whProducts = useMemo(
-    () => products.filter(p => p.warehouse_id === form.warehouse_id),
-    [products, form.warehouse_id]
-  )
-
-  const filteredWhProducts = useMemo(() => {
-    const q = productSearch.trim().toLowerCase()
-
-    return whProducts.filter(p => {
-      if (!q) return true
-      return (
-        p.name.toLowerCase().includes(q) ||
-        (p.sku || '').toLowerCase().includes(q) ||
-        p.id.toLowerCase().includes(q)
-      )
-    })
-  }, [whProducts, productSearch])
-
-  const productStockRows = useMemo(
-    () => stockRows.filter(s => s.product_id === form.product_id && s.on_hand > 0),
-    [stockRows, form.product_id]
-  )
-
-  const selectedStock = useMemo(
-    () => stockRows.find(s => s.id === form.stock_id),
-    [stockRows, form.stock_id]
-  )
-
-  const selectedProduct = useMemo(
-    () => products.find(p => p.id === form.product_id) || null,
-    [products, form.product_id]
-  )
-
-  const getVariantLabel = useCallback((s: Stock) => {
-    const attrs = s.attrs || {}
-    const parts = Object.values(attrs).filter(Boolean)
-    const razmer = parts.length > 0 ? parts.join(' × ') : ''
-    const batch = s.batch ? `LOT: ${s.batch}` : ''
-    const price = s.sell_price ? `$${s.sell_price.toLocaleString()}` : ''
-    const qty = `${s.on_hand} dona`
-    return [razmer, batch, price, qty].filter(Boolean).join(' | ')
-  }, [])
-
-  const onProductChange = useCallback((product_id: string) => {
-    const rows = stockRows.filter(s => s.product_id === product_id && s.on_hand > 0)
-
-    if (rows.length === 1) {
-      setForm(prev => ({
-        ...prev,
-        product_id,
-        stock_id: rows[0].id,
-        sell_price: rows[0].sell_price || '',
-      }))
-    } else {
-      setForm(prev => ({
-        ...prev,
-        product_id,
-        stock_id: '',
-        sell_price: '',
-      }))
-    }
-
-    setProductDropdownOpen(false)
-    setProductSearch('')
-  }, [stockRows])
-
-  const onStockChange = useCallback((stock_id: string) => {
-    const stock = stockRows.find(r => r.id === stock_id)
-    setForm(prev => ({
-      ...prev,
-      stock_id,
-      sell_price: stock?.sell_price || '',
-    }))
-  }, [stockRows])
-
-  const handleFormChange = useCallback((field: keyof FormData, value: string) => {
-    setForm(prev => ({ ...prev, [field]: value }))
-  }, [])
-
-  const resetForm = useCallback(() => {
-    setForm({
-      warehouse_id: role.warehouses[0] || '',
-      product_id: '',
-      stock_id: '',
-      qty: '',
-      sell_price: '',
-      sale_type: 'paid',
-      client_id: '',
-      due_date: '',
-      note: '',
-    })
-    setSubmitError(null)
-    setProductDropdownOpen(false)
-    setProductSearch('')
-  }, [role.warehouses])
-
-  const openModal = useCallback(() => {
-    resetForm()
-    setModal(true)
-  }, [resetForm])
-
-  const closeModal = useCallback(() => {
-    setModal(false)
-    setProductDropdownOpen(false)
-    setProductSearch('')
-    setSubmitError(null)
-  }, [])
-
-  const validateForm = useCallback((): string | null => {
-    if (!form.product_id) return 'Mahsulot tanlanmagan'
-    if (!form.stock_id) return 'Variant tanlanmagan'
-    if (!form.qty) return 'Miqdor kiritilmagan'
-
-    const qty = Number(form.qty)
-    if (isNaN(qty) || qty <= 0) return "Miqdor noto'g'ri"
-
-    if (selectedStock && qty > selectedStock.on_hand) {
-      return "Mavjud miqdordan ko'p kiritildi"
-    }
-
-    if (form.sale_type === 'debt' && !form.client_id) {
-      return 'Qarz uchun mijoz tanlanishi kerak'
-    }
-
-    return null
-  }, [form, selectedStock])
-
-  const handleSubmit = async () => {
-    const validationError = validateForm()
-    if (validationError) {
-      setSubmitError(validationError)
-      return
-    }
-
-    setSaving(true)
-    setSubmitError(null)
-
-    try {
-      const prod = products.find(p => p.id === form.product_id)
-      if (!prod) throw new Error('Mahsulot topilmadi')
-      if (!selectedStock) throw new Error('Stock varianti topilmadi')
-
-      const client = clients.find(c => c.id === form.client_id)
-      const wh = WAREHOUSES.find(w => w.id === form.warehouse_id)
-
-      const qty = Number(form.qty)
-      const sellPrice =
-        form.sell_price === ''
-          ? (selectedStock.sell_price || 0)
-          : Number(form.sell_price)
-
-      const costPrice = selectedStock.cost_price || prod.cost_price || 0
-
-      if (isNaN(qty) || isNaN(sellPrice)) {
-        throw new Error("Noto'g'ri son format")
-      }
-
-      const { data: txData, error: txError } = await supabase
-        .from('transactions')
-        .insert([
-          {
-            type: 'issuance',
-            warehouse_id: form.warehouse_id,
-            product_id: form.product_id,
-            stock_id: selectedStock.id,
-            qty,
-            sell_price: sellPrice,
-            cost_price: costPrice,
-            sale_type: form.sale_type,
-            client_id: form.client_id || null,
-            batch: selectedStock.batch || null,
-            note: form.note || null,
-            user_role: user.role,
-          },
-        ])
-        .select()
-
-      if (txError) throw txError
-
-      const newOnHand = Math.max(0, selectedStock.on_hand - qty)
-
-      const { error: stockError } = await supabase
-        .from('stock')
-        .update({ on_hand: newOnHand })
-        .eq('id', selectedStock.id)
-
-      if (stockError) throw stockError
-
-      if (form.sale_type === 'debt' && form.client_id) {
-        const { error: debtError } = await supabase
-          .from('debts')
-          .insert([
-            {
-              client_id: form.client_id,
-              product_id: form.product_id,
-              warehouse_id: form.warehouse_id,
-              qty,
-              total: qty * sellPrice,
-              paid: 0,
-              status: 'open',
-              due_date: form.due_date || null,
-            },
-          ])
-
-        if (debtError) throw debtError
-      }
-
-      const { error: auditError } = await supabase
-        .from('audit_logs')
-        .insert([
-          {
-            user_role: user.role,
-            user_name: user.name,
-            action: 'stock_issued',
-            entity: 'product',
-            record_id: form.product_id,
-            detail: `Chiqim: ${qty} ${prod.unit} — ${prod.name} (${form.sale_type}) | Partiya: ${selectedStock.batch || '—'}`,
-          },
-        ])
-
-      if (auditError) throw auditError
-
-      if (txData?.[0]) {
-        try {
-          const attrs = selectedStock?.attrs || {}
-
-          const variantText = Object.values(attrs)
-            .filter(v => v != null && String(v).trim() !== '')
-            .map(v => String(v))
-            .join(' × ')
-
-          const productCode = prod.sku || prod.id
-
-          printReceipt({
-            id: txData[0].id,
-            date: new Date().toLocaleDateString('uz-UZ'),
-
-            client: client?.name || '—',
-            warehouse: wh?.name || '—',
-
-            product: prod.name,
-            productCode: productCode || '—',
-            batch: selectedStock?.batch || '—',
-            variant: variantText || '—',
-
-            qty,
-            unit: prod.unit,
-            price: sellPrice,
-            total: qty * sellPrice,
-
-            saleType: form.sale_type,
-            note: form.note,
-            seller: user.name,
-          })
-        } catch (pdfError) {
-          console.warn('PDF yaratishda xatolik:', pdfError)
+  const groupedByClient = useMemo(() => {
+    const groups: Record<string, any> = {}
+    txs.forEach((tx: any) => {
+      const key = tx.client_id || 'no_client'
+      if (!groups[key]) {
+        groups[key] = {
+          id: key,
+          client_name: tx.clients?.name || tr.noClient,
+          items: [],
+          total_qty: 0,
+          total_amount: 0,
+          last_date: tx.created_at
         }
       }
+      groups[key].items.push(tx)
+      groups[key].total_qty += (tx.qty || 0)
+      groups[key].total_amount += ((tx.qty || 0) * (tx.sell_price || 0))
+      if (new Date(tx.created_at) > new Date(groups[key].last_date)) groups[key].last_date = tx.created_at
+    })
+    return Object.values(groups).sort((a: any, b: any) => new Date(b.last_date).getTime() - new Date(a.last_date).getTime())
+  }, [txs, tr.noClient])
 
-      closeModal()
-      resetForm()
-      await fetchData()
-    } catch (err) {
-      console.error('Chiqim yaratishda xatolik:', err)
-      setSubmitError("Xatolik yuz berdi. Qayta urinib ko'ring.")
-    } finally {
-      setSaving(false)
-    }
+  const filteredProducts = products.filter(p => p.warehouse_id === activeWhId && (p.name.toLowerCase().includes(prodSearch.toLowerCase()) || (p.sku || '').toLowerCase().includes(prodSearch.toLowerCase())))
+  const currentProd = products.find(p => p.id === activeProdId)
+  const currentStock = stockRows.find(s => s.id === activeStockId)
+  const availableStock = stockRows.filter(s => s.product_id === activeProdId && s.on_hand > 0)
+
+  const addToCart = () => {
+    if (!activeStockId || !activeQty || Number(activeQty) <= 0) return
+    if (Number(activeQty) > (currentStock?.on_hand || 0)) return alert(tr.noData)
+
+    setCart([...cart, {
+      tempId: Math.random().toString(),
+      warehouse_id: activeWhId,
+      warehouse_name: WAREHOUSES.find(w => w.id === activeWhId)?.name || '',
+      product_id: activeProdId,
+      product_name: currentProd?.name || '',
+      unit: currentProd?.unit || '',
+      stock_id: activeStockId,
+      batch: currentStock?.batch || null,
+      qty: Number(activeQty),
+      sell_price: Number(activePrice || currentStock?.sell_price || 0),
+      cost_price: currentStock?.cost_price || 0,
+      variant_label: Object.values(currentStock?.attrs || {}).join(' × ')
+    }])
+    setActiveProdId(''); setActiveStockId(''); setActiveQty(''); setActivePrice('');
   }
 
-  const printFromHistory = useCallback((tx: Transaction) => {
-    const wh2 = WAREHOUSES.find(w => w.id === tx.warehouse_id)
-    const txProduct = products.find(p => p.id === tx.product_id)
-    const txStock = stockRows.find(s => s.id === tx.stock_id)
+  // BU YERDA: Xatolikni to'g'irlaydigan funksiya
+  const removeFromCart = (id: string) => {
+    setCart(cart.filter(i => i.tempId !== id));
+  };
 
-    const attrs = txStock?.attrs || {}
-    const variantText = Object.values(attrs)
-      .filter(v => v != null && String(v).trim() !== '')
-      .map(v => String(v))
-      .join(' × ')
+  const handleSubmit = async () => {
+    if (cart.length === 0 || saving) return
+    if (saleType === 'debt' && !selectedClientId) return alert(tr.roleRequired)
 
-    const productCode =
-      txProduct?.sku ||
-      txProduct?.id ||
-      tx.product_id
-
+    setSaving(true)
     try {
-      printReceipt({
-        id: tx.id,
-        date: new Date(tx.created_at).toLocaleDateString('uz-UZ'),
-        client: tx.clients?.name || '—',
-        warehouse: wh2?.name || '—',
+      const { data: newTxs, error: txErr } = await supabase.from('transactions').insert(
+        cart.map(i => ({
+          type: 'issuance', warehouse_id: i.warehouse_id, product_id: i.product_id,
+          stock_id: i.stock_id, qty: i.qty, sell_price: i.sell_price, cost_price: i.cost_price,
+          sale_type: saleType, client_id: selectedClientId || null, batch: i.batch, note, user_role: user.role
+        }))
+      ).select()
 
-        product: tx.products?.name || txProduct?.name || '—',
-        productCode: productCode || '—',
-        batch: tx.batch || txStock?.batch || '—',
-        variant: variantText || '—',
+      if (txErr) throw txErr
 
-        qty: tx.qty,
-        unit: tx.products?.unit || txProduct?.unit || '',
-        price: tx.sell_price || 0,
-        total: tx.qty * (tx.sell_price || 0),
-        saleType: tx.sale_type,
-        note: tx.note || '',
-        seller: user.name,
-      })
-    } catch (err) {
-      console.error('PDF yaratishda xatolik:', err)
-    }
-  }, [products, stockRows, user.name])
-
-  const deleteIssuance = useCallback(async (tx: Transaction) => {
-    const ok = window.confirm("Haqiqatan ham bu chiqimni o‘chirmoqchimisiz?")
-    if (!ok) return
-
-    setDeletingId(tx.id)
-
-    try {
-      if (!tx.stock_id) {
-        throw new Error("Bu transactionda stock_id yo'q. Stockga qaytarib bo'lmaydi.")
+      for (const i of cart) {
+        const s = stockRows.find(sr => sr.id === i.stock_id)
+        await supabase.from('stock').update({ on_hand: (s?.on_hand || 0) - i.qty }).eq('id', i.stock_id)
       }
 
-      const { data: stockRow, error: stockReadError } = await supabase
-        .from('stock')
-        .select('id, on_hand')
-        .eq('id', tx.stock_id)
-        .single()
-
-      if (stockReadError) throw stockReadError
-      if (!stockRow) throw new Error('Stock topilmadi')
-
-      const restoredOnHand = Number(stockRow.on_hand ?? 0) + Number(tx.qty ?? 0)
-
-      const { error: stockUpdateError } = await supabase
-        .from('stock')
-        .update({ on_hand: restoredOnHand })
-        .eq('id', tx.stock_id)
-
-      if (stockUpdateError) throw stockUpdateError
-
-      const { error: txDeleteError } = await supabase
-        .from('transactions')
-        .delete()
-        .eq('id', tx.id)
-
-      if (txDeleteError) throw txDeleteError
-
-      if (tx.sale_type === 'debt' && tx.client_id) {
-        await supabase
-          .from('debts')
-          .delete()
-          .eq('client_id', tx.client_id)
-          .eq('product_id', tx.product_id)
-          .eq('warehouse_id', tx.warehouse_id)
-          .eq('qty', tx.qty)
-          .eq('status', 'open')
+      if (saleType === 'debt' && selectedClientId) {
+        await supabase.from('debts').insert([{ client_id: selectedClientId, total: cart.reduce((s, i) => s + (i.qty * i.sell_price), 0), paid: 0, status: 'open', due_date: dueDate || null }])
       }
 
-      const { error: auditError } = await supabase
-        .from('audit_logs')
-        .insert([
-          {
-            user_role: user.role,
-            user_name: user.name,
-            action: 'issuance_deleted',
-            entity: 'transactions',
-            record_id: tx.id,
-            detail: `Chiqim o'chirildi: ${tx.products?.name || 'Unknown'} | qty: ${tx.qty} | stock qaytarildi`,
-          },
-        ])
-
-      if (auditError) throw auditError
-
-      await fetchData()
-    } catch (err) {
-      console.error("Chiqimni o'chirishda xatolik:", err)
-      alert(err instanceof Error ? err.message : "Chiqimni o'chirishda xatolik yuz berdi")
-    } finally {
-      setDeletingId(null)
-    }
-  }, [user.role, user.name])
-
-  const saleColors: Record<string, string> = {
-    paid: '#00d4aa',
-    debt: '#ff4757',
-    free: '#8896ae',
-  }
-
-  const saleLabels: Record<string, string> = {
-    paid: tr.paid,
-    debt: tr.debt,
-    free: tr.free,
+      setModal(false); setCart([]); fetchData();
+    } catch (e) { alert(tr.noAccess) } finally { setSaving(false) }
   }
 
   return (
-    <div>
-      <div className="mb-4 flex items-center gap-3">
-        <button
-          onClick={openModal}
-          className="flex items-center gap-2 rounded-xl bg-[#ffa502] px-4 py-2.5 text-[13px] font-bold text-[#0c0800] transition-all hover:bg-[#ffb830]"
-        >
-          📤 {tr.newIssuance}
-        </button>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center px-4">
+        <h2 className="text-2xl font-black text-white">{tr.issuanceByClient}</h2>
+        <button onClick={() => { setModal(true); setCart([]); }} className="bg-[#ffa502] text-black font-black px-8 py-4 rounded-2xl shadow-lg hover:scale-105 transition-all">📤 {tr.newIssuance}</button>
       </div>
 
-      {error && (
-        <div className="mb-4 rounded-xl border border-[#ff4757]/30 bg-[#ff4757]/10 p-4 text-[13px] text-[#ff4757]">
-          ⚠️ {error}
-          <button
-            onClick={fetchData}
-            className="ml-4 rounded-lg bg-[#ff4757]/20 px-3 py-1 hover:bg-[#ff4757]/30"
-          >
-            Qayta urinish
-          </button>
+      <div className="bg-[#0d1018] border border-[#1e2535] rounded-[32px] overflow-hidden shadow-2xl mx-4">
+        <table className="w-full text-left">
+          <thead className="bg-[#131720] border-b border-[#1e2535]">
+            <tr className="text-[10px] font-mono text-[#4a5568] uppercase tracking-[0.2em]">
+              <th className="p-6">{tr.client}</th>
+              <th className="p-6 text-center">{tr.product}</th>
+              <th className="p-6 text-center">{tr.totalQty}</th>
+              <th className="p-6 text-right">{tr.total} ($)</th>
+              <th className="p-6 text-center">{tr.details}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#1e2535]">
+            {groupedByClient.map((sale: any) => (
+              <tr key={sale.id} onClick={() => setViewingGroup(sale)} className="hover:bg-[#131720] cursor-pointer transition-all group">
+                <td className="p-6">
+                  <div className="font-black text-white text-lg group-hover:text-[#ffa502] transition-colors">{sale.client_name}</div>
+                  <div className="text-[10px] text-[#4a5568] font-mono mt-1">{tr.lastAction}: {new Date(sale.last_date).toLocaleDateString()}</div>
+                </td>
+                <td className="p-6 text-center"><span className="bg-[#1e2535] px-3 py-1 rounded-full text-xs text-[#8896ae]">{sale.items.length} {tr.itemsCount}</span></td>
+                <td className="p-6 text-center font-bold text-white">{sale.total_qty}</td>
+                <td className="p-6 text-right font-black text-[#00d4aa] text-2xl">{fmt(sale.total_amount)}</td>
+                <td className="p-6 text-center text-[#ffa502]">🔍</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {viewingGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-2xl p-6">
+          <div className="bg-[#0d1018] w-full max-w-5xl rounded-[40px] border border-[#1e2535] shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="p-8 border-b border-[#1e2535] bg-[#131720] flex justify-between items-center">
+              <div><p className="text-[10px] font-mono text-[#4a5568] uppercase mb-1">{tr.details}</p><h2 className="text-3xl font-black text-white">{viewingGroup.client_name}</h2></div>
+              <button onClick={() => setViewingGroup(null)} className="w-12 h-12 rounded-2xl border border-[#1e2535] text-[#4a5568] hover:text-white transition-all">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-8">
+               <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-[10px] font-mono text-[#4a5568] uppercase border-b border-[#1e2535] pb-4">
+                      <th className="pb-4">{tr.date}</th><th className="pb-4">{tr.product}</th><th className="pb-4">{tr.warehouse}</th><th className="pb-4 text-center">{tr.qty}</th><th className="pb-4 text-right">{tr.total}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1e2535]/50">
+                    {viewingGroup.items.map((item: any, i: number) => (
+                      <tr key={i}>
+                        <td className="py-4 text-xs font-mono text-[#4a5568]">{new Date(item.created_at).toLocaleDateString()}</td>
+                        <td className="py-4 font-bold text-white text-sm">{item.products?.name}</td>
+                        <td className="py-4 text-xs text-[#8896ae]">{WAREHOUSES.find(w => w.id === item.warehouse_id)?.name}</td>
+                        <td className="py-4 text-center font-black text-white">{item.qty} {item.products?.unit}</td>
+                        <td className="py-4 text-right font-black text-[#00d4aa]">{fmt(item.qty * item.sell_price)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+               </table>
+            </div>
+            <div className="p-8 bg-[#131720] border-t border-[#1e2535] flex justify-between items-center">
+               <div><p className="text-[10px] font-mono text-[#4a5568] uppercase mb-1">{tr.total}:</p><p className="text-4xl font-black text-[#00d4aa]">{fmt(viewingGroup.total_amount)}</p></div>
+               <button className="bg-[#ffa502] text-black font-black px-12 py-4 rounded-2xl hover:scale-105 transition-all">🖨️ {tr.confirm}</button>
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border border-[#1e2535] bg-[#0d1018]">
-        <div className="flex items-center gap-2 border-b border-[#1e2535] bg-[#131720] px-5 py-3">
-          <div className="h-4 w-0.5 rounded bg-[#ffa502]" />
-          <span className="text-[14px] font-bold">{tr.issuance} ({txs.length})</span>
-        </div>
-
-        {loading ? (
-          <div className="space-y-2 p-4">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-16 animate-pulse rounded-lg bg-[#131720]" />
-            ))}
-          </div>
-        ) : txs.length === 0 ? (
-          <div className="py-16 text-center text-[#4a5568]">
-            <div className="mb-2 text-3xl">📤</div>
-            {tr.noData}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-[1100px] w-full border-collapse">
-              <thead>
-                <tr>
-                  {[tr.date, 'Ombor', tr.name, 'Partiya', tr.qty, tr.saleType, tr.client, tr.sellPrice, 'Chek', 'Delete'].map(h => (
-                    <th
-                      key={h}
-                      className="border-b border-[#1e2535] bg-[#0d1018] px-4 py-3 text-left text-[10px] font-mono uppercase tracking-wider text-[#4a5568]"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-
-              <tbody>
-                {txs.map(tx => {
-                  const wh = WAREHOUSES.find(w => w.id === tx.warehouse_id)
-                  const color = saleColors[tx.sale_type] || '#8896ae'
-                  const label = saleLabels[tx.sale_type] || tx.sale_type
-
-                  return (
-                    <tr
-                      key={tx.id}
-                      className="border-b border-[#1e2535] transition-all hover:bg-[#131720]"
-                    >
-                      <td className="whitespace-nowrap px-4 py-3 text-[11px] font-mono text-[#4a5568]">
-                        {new Date(tx.created_at).toLocaleDateString('uz-UZ')}
-                      </td>
-
-                      <td className="px-4 py-3">
-                        {wh ? (
-                          <span
-                            className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap"
-                            style={{
-                              background: wh.color + '18',
-                              color: wh.color,
-                              borderColor: wh.color + '30',
-                            }}
-                          >
-                            {wh.icon} {wh.name}
-                          </span>
-                        ) : (
-                          <span className="text-[12px] text-[#4a5568]">—</span>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-3 text-[13px] font-bold text-white">
-                        {tx.products?.name || '—'}
-                      </td>
-
-                      <td className="whitespace-nowrap px-4 py-3 text-[11px] font-mono text-[#4a5568]">
-                        {tx.batch || '—'}
-                      </td>
-
-                      <td className="whitespace-nowrap px-4 py-3 font-mono font-bold text-[#ffa502]">
-                        −{tx.qty} {tx.products?.unit || ''}
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <span
-                          className="inline-flex rounded border px-2 py-0.5 text-[11px] font-mono font-bold whitespace-nowrap"
-                          style={{
-                            background: color + '18',
-                            color,
-                            borderColor: color + '30',
-                          }}
-                        >
-                          {label}
-                        </span>
-                      </td>
-
-                      <td className="px-4 py-3 text-[12px] text-[#8896ae]">
-                        {tx.clients?.name || '—'}
-                      </td>
-
-                      <td className="whitespace-nowrap px-4 py-3 font-mono text-[#00d4aa]">
-                        ${tx.sell_price?.toLocaleString('uz-UZ')}
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => printFromHistory(tx)}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#1e2535] text-sm text-[#8896ae] transition-all hover:border-[#00d4aa] hover:bg-[#00d4aa]/10 hover:text-[#00d4aa]"
-                          title="Chek chop etish"
-                        >
-                          🖨️
-                        </button>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => deleteIssuance(tx)}
-                          disabled={deletingId === tx.id}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#1e2535] text-sm text-[#ff4757] transition-all hover:border-[#ff4757] hover:bg-[#ff4757]/10 disabled:cursor-not-allowed disabled:opacity-50"
-                          title="Chiqimni o‘chirish"
-                        >
-                          {deletingId === tx.id ? '…' : '✕'}
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm">
-          <div className="max-h-[90vh] w-[700px] max-w-[95vw] overflow-y-auto rounded-2xl border border-[#28324a] bg-[#0d1018] p-7">
-            <div className="mb-5 flex items-center justify-between text-[17px] font-black">
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-[#ffa502]" />
-                {tr.newIssuance}
-              </div>
-              <button
-                onClick={closeModal}
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#1e2535] text-[#4a5568] transition-all hover:border-[#ff4757] hover:text-white"
-              >
-                ✕
-              </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-xl p-6">
+          <div className="bg-[#0d1018] w-full max-w-6xl rounded-[40px] border border-[#1e2535] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="p-8 border-b border-[#1e2535] flex justify-between items-center bg-[#131720]">
+              <h2 className="text-2xl font-black text-white">{tr.newIssuance}</h2>
+              <button onClick={() => setModal(false)} className="w-12 h-12 rounded-2xl border border-[#1e2535] text-[#4a5568] hover:text-white transition-all">✕</button>
             </div>
-
-            {submitError && (
-              <div className="mb-4 rounded-xl border border-[#ff4757]/30 bg-[#ff4757]/10 p-3 text-[12px] text-[#ff4757]">
-                ⚠️ {submitError}
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                  Ombor
-                </label>
-                <select
-                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
-                  value={form.warehouse_id}
-                  onChange={e => {
-                    const nextWarehouse = e.target.value
-                    setForm(prev => ({
-                      ...prev,
-                      warehouse_id: nextWarehouse,
-                      product_id: '',
-                      stock_id: '',
-                      sell_price: '',
-                    }))
-                    setProductDropdownOpen(false)
-                    setProductSearch('')
-                  }}
-                >
-                  {WAREHOUSES.filter(w => role.warehouses.includes(w.id)).map(w => (
-                    <option key={w.id} value={w.id}>
-                      {w.icon} {w.name}
-                    </option>
-                  ))}
+            <div className="flex-1 overflow-hidden grid grid-cols-12">
+              <div className="col-span-5 p-8 overflow-y-auto border-r border-[#1e2535] space-y-6">
+                <select className="w-full bg-[#131720] border border-[#1e2535] p-4 rounded-2xl text-white outline-none focus:border-[#ffa502]" value={activeWhId} onChange={e => {setActiveWhId(e.target.value); setActiveProdId('');}}>
+                  {WAREHOUSES.filter(w => role.warehouses.includes(w.id)).map(w => <option key={w.id} value={w.id}>{w.icon} {w.name}</option>)}
                 </select>
-              </div>
-
-              <div className="relative" ref={productDropdownRef}>
-                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                  {tr.name}
-                </label>
-
-                <button
-                  type="button"
-                  onClick={() => setProductDropdownOpen(prev => !prev)}
-                  className="flex w-full items-center justify-between rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none transition-all hover:border-[#00d4aa]"
-                >
-                  <span className={form.product_id ? 'text-white' : 'text-[#8896ae]'}>
-                    {form.product_id
-                      ? selectedProduct?.name || '— Tanlang —'
-                      : '— Tanlang —'}
-                  </span>
-                  <span className="text-[10px] text-[#8896ae]">▼</span>
-                </button>
-
-                {productDropdownOpen && (
-                  <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-2xl border border-[#1e2535] bg-[#0f1522] shadow-2xl">
-                    <div className="border-b border-[#1e2535] p-2">
-                      <input
-                        type="text"
-                        value={productSearch}
-                        onChange={e => setProductSearch(e.target.value)}
-                        placeholder="SKU / nom / texture qidirish..."
-                        className="w-full rounded-xl border border-[#00d4aa] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none placeholder:text-[#4a5568]"
-                        autoFocus
-                      />
+                <div className="relative">
+                  <button onClick={() => setProdDropOpen(!prodDropOpen)} className="w-full bg-[#131720] border border-[#1e2535] p-4 rounded-2xl text-left text-white flex justify-between items-center">{currentProd?.name || tr.search} <span>▼</span></button>
+                  {prodDropOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-2 bg-[#131720] border border-[#1e2535] rounded-2xl shadow-2xl z-50 max-h-60 overflow-y-auto p-2">
+                      <input type="text" autoFocus placeholder={tr.search} className="w-full bg-[#0d1018] p-3 rounded-xl mb-2 outline-none border border-[#1e2535] text-white" value={prodSearch} onChange={e => setProdSearch(e.target.value)}/>
+                      {filteredProducts.map(p => <button key={p.id} onClick={() => {setActiveProdId(p.id); setProdDropOpen(false);}} className="w-full p-3 text-left rounded-xl hover:bg-[#ffa502] hover:text-black text-white">{p.name}</button>)}
                     </div>
-
-                    <div className="max-h-[260px] overflow-y-auto">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setForm(prev => ({
-                            ...prev,
-                            product_id: '',
-                            stock_id: '',
-                            sell_price: '',
-                          }))
-                          setProductDropdownOpen(false)
-                          setProductSearch('')
-                        }}
-                        className="w-full border-b border-[#1e2535] px-3 py-2.5 text-left text-[13px] text-[#8896ae] hover:bg-[#131720]"
-                      >
-                        — Tanlang —
-                      </button>
-
-                      {filteredWhProducts.length === 0 ? (
-                        <div className="px-3 py-4 text-[12px] text-[#4a5568]">
-                          Hech narsa topilmadi
-                        </div>
-                      ) : (
-                        filteredWhProducts.map(p => {
-                          const isActive = form.product_id === p.id
-                          const labelSku = p.sku || p.id
-
-                          return (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onClick={() => onProductChange(p.id)}
-                              className={`w-full border-b border-[#1e2535] px-3 py-2.5 text-left text-[13px] transition-all ${
-                                isActive
-                                  ? 'bg-[#0095ff] text-white'
-                                  : 'text-white hover:bg-[#131720]'
-                              }`}
-                            >
-                              <span className="font-bold">[{labelSku}]</span> {p.name}
-                            </button>
-                          )
-                        })
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {form.product_id && productStockRows.length > 0 && (
-                <div className="col-span-2">
-                  <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                    📐 Razmer / Partiya tanlang
-                  </label>
-                  <select
-                    className="w-full rounded-xl border border-[#ffa502]/40 bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#ffa502]"
-                    value={form.stock_id}
-                    onChange={e => onStockChange(e.target.value)}
-                  >
-                    <option value="">— Variant tanlang —</option>
-                    {productStockRows.map(s => (
-                      <option key={s.id} value={s.id}>
-                        {getVariantLabel(s)}
-                      </option>
-                    ))}
+                  )}
+                </div>
+                {activeProdId && (
+                  <select className="w-full bg-[#ffa502]/5 border border-[#ffa502]/30 p-4 rounded-2xl text-[#ffa502] outline-none" value={activeStockId} onChange={e => {setActiveStockId(e.target.value); const s = stockRows.find(sr => sr.id === e.target.value); setActivePrice(s?.sell_price || '');}}>
+                    <option value="">--- {tr.batch} ---</option>
+                    {availableStock.map(s => <option key={s.id} value={s.id}>{Object.values(s.attrs || {}).join(' × ')} | {tr.onHand}: {s.on_hand}</option>)}
                   </select>
-                </div>
-              )}
-
-              {form.product_id && productStockRows.length === 0 && (
-                <div className="col-span-2 rounded-xl border border-[#ff4757]/20 bg-[#ff4757]/10 px-4 py-3 text-[12px] text-[#ff4757]">
-                  ⚠️ Bu mahsulot stokda mavjud emas!
-                </div>
-              )}
-
-              <div>
-                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                  {tr.qty}
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none placeholder:text-[#4a5568] focus:border-[#00d4aa]"
-                  placeholder="0"
-                  value={form.qty}
-                  onChange={e => handleFormChange('qty', e.target.value)}
-                />
-                {selectedStock && (
-                  <div className="mt-1 text-[10px] font-mono text-[#4a5568]">
-                    Mavjud: {selectedStock.on_hand} dona
-                  </div>
                 )}
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                  {tr.sellPrice}
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none placeholder:text-[#4a5568] focus:border-[#00d4aa]"
-                  placeholder="0"
-                  value={form.sell_price}
-                  onChange={e => handleFormChange('sell_price', e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                  {tr.saleType}
-                </label>
-                <select
-                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
-                  value={form.sale_type}
-                  onChange={e => handleFormChange('sale_type', e.target.value as FormData['sale_type'])}
-                >
-                  <option value="paid">{tr.paid}</option>
-                  <option value="debt">{tr.debt}</option>
-                  <option value="free">{tr.free}</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                  {tr.client}
-                </label>
-                <select
-                  className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
-                  value={form.client_id}
-                  onChange={e => handleFormChange('client_id', e.target.value)}
-                >
-                  <option value="">— Tanlang —</option>
-                  {clients.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {form.sale_type === 'debt' && (
-                <div className="col-span-2">
-                  <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                    {tr.dueDate}
-                  </label>
-                  <input
-                    type="date"
-                    className="w-full rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none focus:border-[#00d4aa]"
-                    value={form.due_date}
-                    onChange={e => handleFormChange('due_date', e.target.value)}
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <input type="number" className="w-full bg-[#131720] border border-[#1e2535] p-4 rounded-2xl text-white outline-none focus:border-[#00d4aa]" value={activeQty} onChange={e => setActiveQty(Number(e.target.value))} placeholder={tr.qty}/>
+                  <input type="number" className="w-full bg-[#131720] border border-[#1e2535] p-4 rounded-2xl text-white outline-none focus:border-[#00d4aa]" value={activePrice} onChange={e => setActivePrice(Number(e.target.value))} placeholder={tr.sellPrice}/>
                 </div>
-              )}
-            </div>
-
-            <div className="mt-3">
-              <label className="mb-1.5 block text-[10px] font-mono uppercase tracking-wider text-[#4a5568]">
-                {tr.note}
-              </label>
-              <textarea
-                className="h-20 w-full resize-none rounded-xl border border-[#1e2535] bg-[#131720] px-3 py-2.5 text-[13px] text-white outline-none placeholder:text-[#4a5568] focus:border-[#00d4aa]"
-                placeholder="Ixtiyoriy..."
-                value={form.note}
-                onChange={e => handleFormChange('note', e.target.value)}
-              />
-            </div>
-
-            <div className="mt-5 flex justify-end gap-2 border-t border-[#1e2535] pt-5">
-              <button
-                onClick={closeModal}
-                className="rounded-xl border border-[#1e2535] px-5 py-2.5 text-[13px] font-semibold text-[#8896ae] transition-all hover:border-[#28324a]"
-              >
-                {tr.cancel}
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={saving}
-                className="rounded-xl bg-[#ffa502] px-5 py-2.5 text-[13px] font-bold text-[#0c0800] transition-all hover:bg-[#ffb830] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {saving ? 'Saqlanmoqda...' : tr.confirm}
-              </button>
+                <button onClick={addToCart} className="w-full bg-[#00d4aa] text-black font-black py-5 rounded-2xl hover:shadow-[0_0_30px_rgba(0,212,170,0.3)] transition-all">+ {tr.add}</button>
+                <div className="h-px bg-[#1e2535]" />
+                <select className="w-full bg-[#131720] border border-[#1e2535] p-4 rounded-2xl text-white outline-none focus:border-[#ffa502]" value={selectedClientId} onChange={e => setSelectedClientId(e.target.value)}>
+                  <option value="">{tr.client}...</option>
+                  {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <select className="w-full bg-[#131720] border border-[#1e2535] p-4 rounded-2xl text-white" value={saleType} onChange={e => setSaleType(e.target.value as any)}>
+                  <option value="paid">✅ {tr.paid}</option><option value="debt">🚩 {tr.debt}</option><option value="free">🎁 {tr.free}</option>
+                </select>
+              </div>
+              <div className="col-span-7 flex flex-col bg-[#131720]/50 h-full">
+                <div className="flex-1 p-8 space-y-4 overflow-y-auto">
+                  {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center opacity-20">🛒 {tr.noData}</div> :
+                    cart.map(item => (
+                      <div key={item.tempId} className="bg-[#0d1018] border border-[#1e2535] p-5 rounded-3xl flex justify-between items-center group">
+                        <div><p className="font-black text-white">{item.product_name}</p><p className="text-[10px] text-[#4a5568] uppercase">{item.variant_label}</p></div>
+                        <div className="flex items-center gap-8">
+                          <div className="text-right"><p className="text-xs font-mono text-[#8896ae]">{item.qty} {item.unit} x {fmt(item.sell_price)}</p><p className="font-black text-[#00d4aa] text-lg">{fmt(item.qty * item.sell_price)}</p></div>
+                          <button onClick={() => removeFromCart(item.tempId)} className="text-red-500 hover:bg-red-500/10 p-2 rounded-lg transition-all">✕</button>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+                <div className="p-8 bg-[#0d1018] border-t border-[#1e2535] flex justify-between items-center">
+                  <div><p className="text-[10px] font-mono text-[#4a5568] uppercase mb-1">{tr.total}</p><p className="text-4xl font-black text-[#00d4aa]">{fmt(cart.reduce((s, i) => s + (i.qty * i.sell_price), 0))}</p></div>
+                  <button disabled={cart.length === 0 || saving} onClick={handleSubmit} className="bg-[#ffa502] text-black font-black px-12 py-5 rounded-[24px] text-lg hover:scale-105 transition-all disabled:opacity-10 shadow-2xl shadow-[#ffa502]/20">{saving ? "..." : tr.confirm}</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
