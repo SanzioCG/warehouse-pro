@@ -201,91 +201,144 @@ export default function Issuance({ user, lang }: { user: User, lang: Language })
         </table>
       </div>
 
-      {/* VIEW DETAILS MODAL (SIZ SO'RAGAN QISM) */}
-      {viewingGroup && (() => {
-        // Mijoz uchun statistikani hisoblash
-        let totalRevenue = 0;
-        let totalProfit = 0;
-        let totalFreeLoss = 0;
+      {/* VIEW DETAILS MODAL (Mijoz tafsilotlari) */}
+{viewingGroup && (() => {
+  // Hisob-kitoblar
+  let totalRevenue = 0;   // Jami Savdo (Sotilgan puli)
+  let totalCost = 0;      // Tan Narxi (Bizga tushgan narxi)
+  let totalFreeLoss = 0;  // Tekin berilgan mahsulotlar zarari (Tan narxi bo'yicha)
 
-        viewingGroup.items.forEach((item: any) => {
-          const sellPrice = Number(item.sell_price || 0);
-          const costPrice = Number(item.cost_price || item.products?.cost_price || 0);
-          const qty = Number(item.qty || 0);
+  viewingGroup.items.forEach((item: any) => {
+    const qty = Number(item.qty || 0);
+    const sellPrice = Number(item.sell_price || 0);
+    const costPrice = Number(item.cost_price || item.products?.cost_price || 0);
 
-          if (item.sale_type === 'free') {
-            totalFreeLoss += (qty * costPrice);
-          } else {
-            totalRevenue += (qty * sellPrice);
-            totalProfit += qty * (sellPrice - costPrice);
-          }
-        });
+    if (item.sale_type === 'free') {
+      totalFreeLoss += (qty * costPrice);
+    } else {
+      totalRevenue += (qty * sellPrice);
+      totalCost += (qty * costPrice);
+    }
+  });
 
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-xl p-4">
-            <div className="bg-[#0d1018] w-full max-w-5xl rounded-[40px] border border-[#1e2535] shadow-2xl flex flex-col max-h-[90vh]">
-              <div className="p-8 border-b border-[#1e2535] bg-[#131720] rounded-t-[40px]">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h2 className="text-3xl font-black text-white uppercase tracking-tight">{viewingGroup.client_name}</h2>
-                    
-                    {/* MIJOZ STATISTIKASI (Ismi tagida) */}
-                    <div className="flex gap-6 mt-3">
-                       <div className="flex flex-col">
-                         <span className="text-[9px] font-mono text-[#4a5568] uppercase">Umumiy Savdo</span>
-                         <span className="text-sm font-black text-white font-mono">{fmt(totalRevenue)}</span>
-                       </div>
-                       <div className="flex flex-col">
-                         <span className="text-[9px] font-mono text-[#4a5568] uppercase">Sof Foyda</span>
-                         <span className={`text-sm font-black font-mono ${totalProfit >= 0 ? 'text-[#00d4aa]' : 'text-[#ff4757]'}`}>
-                           {totalProfit > 0 ? '+' : ''}{fmt(totalProfit)}
-                         </span>
-                       </div>
-                       {totalFreeLoss > 0 && (
-                         <div className="flex flex-col">
-                           <span className="text-[9px] font-mono text-[#ff4757] uppercase">Tekin (Zarar)</span>
-                           <span className="text-sm font-black text-[#ff4757] font-mono">-{fmt(totalFreeLoss)}</span>
-                         </div>
-                       )}
-                    </div>
-                  </div>
-                  <button onClick={() => setViewingGroup(null)} className="w-12 h-12 rounded-2xl border border-[#1e2535] text-[#4a5568] hover:text-white transition-all flex items-center justify-center">✕</button>
+  // Sof foyda = (Savdo - Tan Narxi) - Tekin berilganlarning zarari
+  const netProfit = (totalRevenue - totalCost) - totalFreeLoss;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-xl p-4">
+      <div className="bg-[#0d1018] w-full max-w-5xl rounded-[40px] border border-[#1e2535] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+        
+        {/* MODAL HEADER */}
+        <div className="p-8 border-b border-[#1e2535] bg-[#131720]">
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h2 className="text-3xl font-black text-white uppercase tracking-tight mb-4">
+                {viewingGroup.client_name}
+              </h2>
+              
+              {/* MIJOZNING MOLIYAVIY STATISTIKASI */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-1">💰 Jami Savdo</span>
+                  <span className="text-lg font-black text-white font-mono">{fmt(totalRevenue)}</span>
+                </div>
+                
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-1">📉 Tan Narxi</span>
+                  <span className="text-lg font-black text-[#8896ae] font-mono">{fmt(totalCost)}</span>
+                </div>
+
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest mb-1">💹 Sof Foyda</span>
+                  <span className={`text-lg font-black font-mono ${netProfit >= 0 ? 'text-[#00d4aa]' : 'text-[#ff4757]'}`}>
+                    {netProfit > 0 ? '+' : ''}{fmt(netProfit)}
+                  </span>
+                </div>
+
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-mono text-[#ff4757] uppercase tracking-widest mb-1">🎁 Tekin (Zarar)</span>
+                  <span className="text-lg font-black text-[#ff4757] font-mono">-{fmt(totalFreeLoss)}</span>
                 </div>
               </div>
-
-              <div className="flex-1 overflow-y-auto p-8">
-                 <table className="w-full text-left">
-                    <thead className="text-[10px] font-mono text-[#4a5568] uppercase border-b border-[#1e2535]">
-                      <tr>
-                        <th className="pb-4">Mahsulot</th>
-                        <th className="pb-4 text-center">Miqdor</th>
-                        <th className="pb-4 text-right">Jami</th>
-                        <th className="pb-4 text-center">Tahrir</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {viewingGroup.items.map((item: any, i: number) => (
-                        <tr key={i} className="border-b border-[#1e2535]/50">
-                          <td className="py-4 font-bold text-white text-sm">
-                            {item.products?.name}
-                            <div className="text-[9px] text-[#4a5568] font-mono mt-0.5">
-                              {item.sale_type === 'free' ? '🎁 TEKIN' : item.sale_type === 'debt' ? '🚩 QARZ' : '✅ NAQD'}
-                            </div>
-                          </td>
-                          <td className="py-4 text-center font-black text-white font-mono">{item.qty} {item.products?.unit}</td>
-                          <td className="py-4 text-right font-black text-[#00d4aa] font-mono">{fmt(item.qty * item.sell_price)}</td>
-                          <td className="py-4 text-center">
-                            <button onClick={(e) => { e.stopPropagation(); setEditItem(item); setEditForm({ qty: item.qty, sell_price: item.sell_price, note: item.note || '' }); }} className="text-[#ffa502] hover:bg-[#ffa502]/10 p-2 rounded-lg transition-all">✎</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                 </table>
-              </div>
             </div>
+            
+            <button 
+              onClick={() => setViewingGroup(null)} 
+              className="w-12 h-12 rounded-2xl border border-[#1e2535] text-[#4a5568] hover:text-white hover:border-red-500 transition-all flex items-center justify-center bg-[#0d1018]"
+            >
+              ✕
+            </button>
           </div>
-        )
-      })()}
+        </div>
+
+        {/* MODAL BODY (Jadval) */}
+        <div className="flex-1 overflow-y-auto p-8">
+           <table className="w-full text-left border-collapse">
+              <thead className="text-[10px] font-mono text-[#4a5568] uppercase border-b border-[#1e2535]">
+                <tr>
+                  <th className="pb-4">Mahsulot nomi</th>
+                  <th className="pb-4 text-center">Miqdori</th>
+                  <th className="pb-4 text-right">Sotuv Narxi</th>
+                  <th className="pb-4 text-right">Jami Summa</th>
+                  <th className="pb-4 text-center">Amal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {viewingGroup.items.map((item: any, i: number) => (
+                  <tr key={i} className="border-b border-[#1e2535]/50 hover:bg-white/[0.02] transition-all">
+                    <td className="py-4">
+                      <div className="font-bold text-white text-[13px]">{item.products?.name}</div>
+                      <div className="text-[9px] font-mono mt-0.5">
+                        {item.sale_type === 'free' ? (
+                          <span className="text-[#ff4757] bg-[#ff4757]/10 px-1.5 py-0.5 rounded">🎁 TEKIN BERILDI</span>
+                        ) : item.sale_type === 'debt' ? (
+                          <span className="text-[#ffa502] bg-[#ffa502]/10 px-1.5 py-0.5 rounded">🚩 QARZGA</span>
+                        ) : (
+                          <span className="text-[#00d4aa] bg-[#00d4aa]/10 px-1.5 py-0.5 rounded">✅ NAQD SOTUV</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-4 text-center font-black text-white font-mono text-[13px]">
+                      {item.qty} {item.products?.unit}
+                    </td>
+                    <td className="py-4 text-right font-mono text-[#8896ae] text-[12px]">
+                      {item.sale_type === 'free' ? '$0' : fmt(item.sell_price)}
+                    </td>
+                    <td className="py-4 text-right font-black text-[#00d4aa] font-mono text-[14px]">
+                      {fmt(item.qty * item.sell_price)}
+                    </td>
+                    <td className="py-4 text-center">
+                      <button 
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          setEditItem(item); 
+                          setEditForm({ qty: item.qty, sell_price: item.sell_price, note: item.note || '' }); 
+                        }} 
+                        className="text-[#ffa502] hover:bg-[#ffa502]/10 p-2 rounded-lg transition-all"
+                        title="Tahrirlash"
+                      >
+                        ✎
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+           </table>
+        </div>
+        
+        {/* MODAL FOOTER */}
+        <div className="p-6 bg-[#131720] border-t border-[#1e2535] flex justify-end gap-4">
+           <button 
+             onClick={() => printReceipt(viewingGroup.items)}
+             className="px-8 py-3 bg-[#ffa502] text-[#0d1018] font-black rounded-2xl hover:scale-105 active:scale-95 transition-all shadow-xl shadow-[#ffa502]/10 flex items-center gap-2"
+           >
+             🖨️ CHEK CHIQARISH
+           </button>
+        </div>
+      </div>
+    </div>
+  )
+})()}
 
       {/* TAHRIRLASH MODALI */}
       {editItem && (
