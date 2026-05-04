@@ -1,77 +1,16 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import type { User, Language } from '../types'
-import { ROLES } from '../config/roles'
+import { ROLES, WAREHOUSES } from '../config/roles'
 import { t } from '../i18n'
 
-interface Props {
-  user: User
-  lang: Language
-}
-
-interface TransactionRow {
-  id: string
-  created_at: string
-  product_id: string | null
-  stock_id: string | null
-  warehouse_id: string | null
-  qty: number
-  type: string
-  products: {
-    name: string | null
-    unit: string | null
-  } | null
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function toNumberOrZero(value: unknown): number {
-  const num = Number(value)
-  return Number.isFinite(num) ? num : 0
-}
-
-function normalizeTransactionRow(value: unknown): TransactionRow | null {
-  if (!isRecord(value)) return null
-
-  const products = isRecord(value.products)
-    ? {
-        name: value.products.name != null ? String(value.products.name) : null,
-        unit: value.products.unit != null ? String(value.products.unit) : null,
-      }
-    : null
-
-  return {
-    id: String(value.id ?? ''),
-    created_at: String(value.created_at ?? ''),
-    product_id: value.product_id != null ? String(value.product_id) : null,
-    stock_id: value.stock_id != null ? String(value.stock_id) : null,
-    warehouse_id: value.warehouse_id != null ? String(value.warehouse_id) : null,
-    qty: toNumberOrZero(value.qty),
-    type: String(value.type ?? ''),
-    products,
-  }
-}
-
-function normalizeTransactionRows(value: unknown): TransactionRow[] {
-  if (!Array.isArray(value)) return []
-
-  return value
-    .map(normalizeTransactionRow)
-    .filter((row): row is TransactionRow => row !== null)
-}
-
-function isOutboundTransaction(type: string): boolean {
-  const normalized = type.trim().toLowerCase()
-  return normalized === 'issuance' || normalized === 'out' || normalized === 'sale' || normalized === 'sold'
-}
+interface Props { user: User; lang: Language }
 
 export default function Transactions({ user, lang }: Props) {
   const tr = t(lang)
   const role = ROLES[user.role]
 
-  const [rows, setRows] = useState<TransactionRow[]>([])
+  const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
@@ -79,158 +18,154 @@ export default function Transactions({ user, lang }: Props) {
 
   const fetchTransactions = useCallback(async () => {
     setLoading(true)
-
     try {
       const { data, error } = await supabase
         .from('transactions')
         .select(`
-          id,
-          created_at,
-          product_id,
-          stock_id,
-          warehouse_id,
-          qty,
-          type,
-          products(name, unit)
+          *,
+          products(name, unit, sku),
+          clients(name)
         `)
         .in('warehouse_id', role.warehouses)
         .order('created_at', { ascending: false })
+        .limit(150)
 
       if (error) throw error
-
-      setRows(normalizeTransactionRows(data))
+      setRows(data || [])
     } catch (error) {
-      console.error('Transactions yuklanmadi:', error)
-      setRows([])
+      console.error('Transactions error:', error)
     } finally {
       setLoading(false)
     }
   }, [role.warehouses])
 
-  useEffect(() => {
-    fetchTransactions()
-  }, [fetchTransactions])
+  useEffect(() => { fetchTransactions() }, [fetchTransactions])
 
-  const handleDeleteTransaction = useCallback(
-    async (row: TransactionRow) => {
-      if (!canDelete) {
-        alert("Sizda bu amal uchun ruxsat yo'q")
-        return
-      }
+  const handleDelete = async (row: any) => {
+    if (!canDelete) return alert("Ruxsat yo'q!")
+    if (!window.confirm("Ushbu operatsiyani o'chirmoqchimisiz? (Ombordagi qoldiq avtomatik to'g'irlanadi)")) return
 
-      const confirmed = window.confirm("Haqiqatan ham bu transactionni o‘chirmoqchimisiz?")
-      if (!confirmed) return
+    setDeletingId(row.id)
+    try {
+      // 1. Ombordagi qoldiqni topish
+      const { data: stockRow } = await supabase
+        .from('stock')
+        .select('id, on_hand')
+        .eq('id', row.stock_id)
+        .single()
 
-      setDeletingId(row.id)
-
-      try {
-        const outbound = isOutboundTransaction(row.type)
-
-        if (outbound) {
-          if (!row.stock_id) {
-            throw new Error("transactions jadvalida stock_id yo'q. Chiqimni stockga qaytarish uchun stock_id kerak.")
-          }
-
-          const { data: stockRow, error: stockReadError } = await supabase
-            .from('stock')
-            .select('id, on_hand')
-            .eq('id', row.stock_id)
-            .single()
-
-          if (stockReadError) throw stockReadError
-          if (!stockRow) throw new Error('Stock topilmadi')
-
-          const restoredOnHand = toNumberOrZero(stockRow.on_hand) + toNumberOrZero(row.qty)
-
-          const { error: stockUpdateError } = await supabase
-            .from('stock')
-            .update({ on_hand: restoredOnHand })
-            .eq('id', row.stock_id)
-
-          if (stockUpdateError) throw stockUpdateError
+      if (stockRow) {
+        let newQty = stockRow.on_hand
+        
+        // MANTIQ: 
+        // Agar o'chirilayotgan narsa CHIQIM bo'lsa -> stock ko'payadi (+)
+        // Agar o'chirilayotgan narsa KIRIM bo'lsa -> stock kamayadi (-)
+        if (row.type === 'issuance' || row.type === 'sale') {
+          newQty += row.qty
+        } else if (row.type === 'receiving') {
+          newQty -= row.qty
         }
 
-        const { error: deleteError } = await supabase
-          .from('transactions')
-          .delete()
-          .eq('id', row.id)
-
-        if (deleteError) throw deleteError
-
-        const { error: auditError } = await supabase
-          .from('audit_logs')
-          .insert([
-            {
-              user_role: user.role,
-              user_name: user.name,
-              action: 'transaction_deleted',
-              entity: 'transactions',
-              record_id: row.id,
-              detail: `Transaction o'chirildi: ${row.products?.name || 'Unknown'} | qty: ${row.qty} | type: ${row.type}`,
-            },
-          ])
-
-        if (auditError) throw auditError
-
-        setRows(prev => prev.filter(item => item.id !== row.id))
-      } catch (error) {
-        console.error("Transaction o'chirishda xatolik:", error)
-        alert(error instanceof Error ? error.message : "Transaction o'chirishda xatolik yuz berdi")
-      } finally {
-        setDeletingId(null)
+        // 2. Stockni yangilash
+        await supabase.from('stock').update({ on_hand: newQty }).eq('id', stockRow.id)
       }
-    },
-    [canDelete, user.name, user.role]
-  )
+
+      // 3. Tranzaksiyani o'chirish
+      await supabase.from('transactions').delete().eq('id', row.id)
+
+      // 4. Audit Log
+      await supabase.from('audit_logs').insert([{
+        user_role: user.role,
+        user_name: user.name,
+        action: 'transaction_deleted',
+        entity: 'transactions',
+        detail: `O'chirildi: ${row.type === 'receiving' ? 'Kirim' : 'Chiqim'} | ${row.products?.name} | Miqdor: ${row.qty}`,
+      }])
+
+      setRows(prev => prev.filter(r => r.id !== row.id))
+    } catch (err) {
+      alert("O'chirishda xatolik yuz berdi")
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   return (
-    <div className="rounded-2xl border border-[#1e2535] bg-[#0d1018] p-6">
-      <h2 className="mb-4 text-lg font-bold">{tr.transactions}</h2>
+    <div className="pt-4">
+      <div className="bg-[#0d1018] border border-[#1e2535] rounded-2xl overflow-hidden shadow-2xl">
+        <div className="px-6 py-4 border-b border-[#1e2535] bg-[#131720] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-1 h-5 bg-[#0095ff] rounded" />
+            <span className="font-bold text-[16px] text-white uppercase tracking-tight">{tr.transactions}</span>
+          </div>
+          <span className="text-[10px] font-mono text-[#4a5568] uppercase tracking-widest">So'nggi 150 ta operatsiya</span>
+        </div>
 
-      {loading ? (
-        <div className="text-[#8896ae]">Loading...</div>
-      ) : rows.length === 0 ? (
-        <div className="text-[#8896ae]">{tr.noData}</div>
-      ) : (
-        <table className="w-full">
-          <thead>
-            <tr className="text-left text-[12px] text-[#8896ae]">
-              <th className="pb-2">#</th>
-              <th className="pb-2">{tr.date}</th>
-              <th className="pb-2">{tr.product}</th>
-              <th className="pb-2">{tr.qty}</th>
-              <th className="pb-2">{tr.type}</th>
-              {canDelete && <th className="pb-2 text-right">Amal</th>}
-            </tr>
-          </thead>
-
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={row.id} className="border-t border-[#1e2535]">
-                <td className="py-3 text-[12px] text-[#8896ae]">{index + 1}</td>
-                <td className="py-3 text-[13px]">
-                  {row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}
-                </td>
-                <td className="py-3 text-[13px]">{row.products?.name || '—'}</td>
-                <td className="py-3 text-[13px] font-mono">{row.qty}</td>
-                <td className="py-3 text-[13px]">{row.type}</td>
-
-                {canDelete && (
-                  <td className="py-3 text-right">
-                    <button
-                      onClick={() => handleDeleteTransaction(row)}
-                      disabled={deletingId === row.id}
-                      className="rounded-xl border border-[#ff4757]/30 bg-[#ff4757]/10 px-3 py-1.5 text-[12px] font-semibold text-[#ff4757] transition-all hover:bg-[#ff4757]/20 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {deletingId === row.id ? "O'chirilmoqda..." : "O'chirish"}
-                    </button>
-                  </td>
-                )}
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse min-w-[900px]">
+            <thead>
+              <tr className="bg-[#0d1018]">
+                {['Vaqt', 'Tur', 'Mahsulot', 'Mijoz/Izoh', 'Miqdor', 'Narx', ''].map(h => (
+                  <th key={h} className="px-6 py-4 text-left text-[10px] font-mono text-[#4a5568] uppercase tracking-widest border-b border-[#1e2535]">{h}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={7} className="text-center py-20 animate-pulse text-[#4a5568]">Yuklanmoqda...</td></tr>
+              ) : rows.length === 0 ? (
+                <tr><td colSpan={7} className="text-center py-20 text-[#4a5568]">{tr.noData}</td></tr>
+              ) : rows.map((row, idx) => {
+                const isOut = row.type === 'issuance' || row.type === 'sale'
+                const wh = WAREHOUSES.find(w => w.id === row.warehouse_id)
+
+                return (
+                  <tr key={row.id} className="border-b border-[#1e2535] hover:bg-[#131720]/50 transition-all">
+                    <td className="px-6 py-4 text-[11px] font-mono text-[#4a5568]">
+                      {new Date(row.created_at).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-black font-mono border ${
+                        isOut ? 'bg-[#ffa502]/10 text-[#ffa502] border-[#ffa502]/20' : 'bg-[#00d4aa]/10 text-[#00d4aa] border-[#00d4aa]/20'
+                      }`}>
+                        {isOut ? '📤 CHIQIM' : '📥 KIRIM'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="font-bold text-[13px] text-white">{row.products?.name}</div>
+                      <div className="text-[10px] text-[#4a5568] font-mono uppercase tracking-tighter">
+                        {wh?.icon} {wh?.name} • SKU: {row.products?.sku || '—'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-[12px] text-[#8896ae] font-semibold">{row.clients?.name || '—'}</div>
+                      {row.note && <div className="text-[10px] text-[#4a5568] italic">"{row.note}"</div>}
+                    </td>
+                    <td className={`px-6 py-4 font-mono font-black text-[14px] ${isOut ? 'text-[#ff4757]' : 'text-[#00d4aa]'}`}>
+                      {isOut ? '-' : '+'}{row.qty} <span className="text-[10px] font-normal opacity-50">{row.products?.unit}</span>
+                    </td>
+                    <td className="px-6 py-4 font-mono text-[12px] text-white">
+                      ${(row.sell_price || row.cost_price || 0).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      {canDelete && (
+                        <button
+                          onClick={() => handleDelete(row)}
+                          disabled={deletingId === row.id}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg border border-[#1e2535] text-[#ff4757] hover:bg-[#ff4757]/10 hover:border-[#ff4757] transition-all"
+                          title="O'chirish"
+                        >
+                          {deletingId === row.id ? '...' : '✕'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }
