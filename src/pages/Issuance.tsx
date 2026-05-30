@@ -69,6 +69,24 @@ export default function Issuance({ user, lang }: { user: User, lang: Language })
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // --- GLOBAL SUMMARY ---
+  const globalSummary = useMemo(() => {
+    let totalRev = 0, totalCst = 0, totalLoss = 0, totalQty = 0
+    txs.forEach((tx: any) => {
+      const q = Number(tx.qty || 0)
+      const s = Number(tx.sell_price || 0)
+      const c = Number(tx.cost_price || tx.products?.cost_price || 0)
+      totalQty += q
+      if (tx.sale_type === 'free') {
+        totalLoss += q * c
+      } else {
+        totalRev += q * s
+        totalCst += q * c
+      }
+    })
+    return { totalRev, totalCst, totalQty, totalLoss, net: totalRev - totalCst - totalLoss }
+  }, [txs])
+
   const handleUpdateItem = async () => {
     if (!editItem || saving) return
     const diff = editForm.qty - editItem.qty 
@@ -150,6 +168,32 @@ export default function Issuance({ user, lang }: { user: User, lang: Language })
         <h2 className="text-2xl font-black text-white">{tr.issuanceByClient}</h2>
         <button onClick={() => { setModal(true); setCart([]); }} className="bg-[#ffa502] text-[#0d1018] font-black px-8 py-4 rounded-2xl shadow-lg hover:scale-105 transition-all">📤 {tr.newIssuance}</button>
       </div>
+
+      {/* ===== GLOBAL SUMMARY STRIP ===== */}
+      {txs.length > 0 && (
+        <div className="mx-4 grid grid-cols-2 md:grid-cols-5 gap-px bg-[#1e2535] rounded-[24px] overflow-hidden border border-[#1e2535] shadow-xl">
+          <div className="bg-[#0d1018] px-6 py-5 flex flex-col gap-1">
+            <span className="text-[9px] font-mono text-[#4a5568] uppercase tracking-widest font-bold">📦 Umumiy Dona</span>
+            <span className="text-2xl font-black text-white font-mono">{globalSummary.totalQty.toLocaleString()}</span>
+          </div>
+          <div className="bg-[#0d1018] px-6 py-5 flex flex-col gap-1">
+            <span className="text-[9px] font-mono text-[#4a5568] uppercase tracking-widest font-bold">💰 Jami Savdo</span>
+            <span className="text-2xl font-black text-white font-mono">{fmt(globalSummary.totalRev)}</span>
+          </div>
+          <div className="bg-[#0d1018] px-6 py-5 flex flex-col gap-1">
+            <span className="text-[9px] font-mono text-[#4a5568] uppercase tracking-widest font-bold">📉 Tan Narxi</span>
+            <span className="text-2xl font-black text-[#8896ae] font-mono">{fmt(globalSummary.totalCst)}</span>
+          </div>
+          <div className="bg-[#0d1018] px-6 py-5 flex flex-col gap-1">
+            <span className="text-[9px] font-mono text-[#4a5568] uppercase tracking-widest font-bold">💹 Sof Foyda</span>
+            <span className={`text-2xl font-black font-mono ${globalSummary.net >= 0 ? 'text-[#00d4aa]' : 'text-[#ff4757]'}`}>{fmt(globalSummary.net)}</span>
+          </div>
+          <div className="bg-[#0d1018] px-6 py-5 flex flex-col gap-1">
+            <span className="text-[9px] font-mono text-[#ff4757] uppercase tracking-widest font-bold">🎁 Tekin Berilgan</span>
+            <span className="text-2xl font-black text-[#ff4757] font-mono">-{fmt(globalSummary.totalLoss)}</span>
+          </div>
+        </div>
+      )}
 
       <div className="bg-[#0d1018] border border-[#1e2535] rounded-[32px] overflow-hidden mx-4 shadow-2xl">
         <table className="w-full text-left">
