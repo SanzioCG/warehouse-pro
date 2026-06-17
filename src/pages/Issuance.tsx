@@ -134,19 +134,38 @@ export default function Issuance({ user, lang }: { user: User, lang: Language })
     if (cart.length === 0 || saving) return
     setSaving(true)
     try {
-      await supabase.from('transactions').insert(
+      // 1) Transaction larni saqlash + ERROR tekshirish
+      const { error: txError } = await supabase.from('transactions').insert(
         cart.map(i => ({
           type: 'issuance', warehouse_id: i.warehouse_id, product_id: i.product_id,
           stock_id: i.stock_id, qty: i.qty, sell_price: i.sell_price, cost_price: i.cost_price,
-          sale_type: saleType, client_id: selectedClientId || null, batch: i.batch, note, user_role: user.role, attrs: i.attrs
+          sale_type: saleType, client_id: selectedClientId || null, batch: i.batch,
+          note, user_role: user.role, attrs: i.attrs
         }))
       )
+
+      // Agar saqlashda xato bo'lsa - STOCK ni KAMAYTIRMAYMIZ va to'xtaymiz
+      if (txError) {
+        console.error('Transaction insert error:', txError)
+        alert("Saqlashda xatolik: " + txError.message)
+        setSaving(false)
+        return
+      }
+
+      // 2) Faqat transaction muvaffaqiyatli saqlangach stock kamaytiramiz
       for (const i of cart) {
         const s = stockRows.find(sr => sr.id === i.stock_id)
-        await supabase.from('stock').update({ on_hand: (s?.on_hand || 0) - i.qty }).eq('id', i.stock_id)
+        const { error: stockError } = await supabase.from('stock')
+          .update({ on_hand: (s?.on_hand || 0) - i.qty })
+          .eq('id', i.stock_id)
+        if (stockError) console.error('Stock update error:', stockError)
       }
+
       setModal(false); setCart([]); fetchData();
-    } catch (e) { alert("Xatolik!") } finally { setSaving(false) }
+    } catch (e: any) {
+      console.error(e)
+      alert("Xatolik: " + (e?.message || e))
+    } finally { setSaving(false) }
   }
 
   const groupedByClient = useMemo(() => {
